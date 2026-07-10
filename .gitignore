@@ -1,0 +1,22 @@
+# local spec drafts — the inbox stays private; ratified specs graduate to the repo root
+spec_inbox/*
+!spec_inbox/.gitkeep
+
+# node secrets: wifi credentials + bearer token live here, never in git
+settings.json
+*.secrets.json
+
+# python
+__pycache__/
+*.pyc
+
+# tooling / editors
+node_modules/
+.vscode/
+.idea/
+.DS_Store
+
+# AI / agent scratch — jormungandr is driven from outside this repo
+CLAUDE.md
+AGENTS.md
+.claude/

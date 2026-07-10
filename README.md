@@ -22,3 +22,17 @@ A GCU project. The bus speaks A-Bus dialect (Auditable Works); the `sol` profile
 SOL-8's convergent form (the sun hosting the moon — and Sól holding her own against
 the serpent); espmox is the sibling that hosts *emulated* guests where jormungandr
 hosts real ones.
+
+Sister repos:
+
+- **[auditable](https://github.com/gentropic/auditable)** — Auditable Works: the
+  single-file notebook, the `ext/` component library, A-Bus.
+- **[espmox](https://github.com/gentropic/espmox)** — the fantasy datacenter: emulated
+  PDP-11s booting real 2.11BSD on the same class of silicon.
+- **[SOL-8](https://github.com/endarthur/SOL-8)** — the fantasy PLC; `sol` is its sun,
+  the mesh and the SCADA dress are its inheritance.
+- **[design](https://github.com/gentropic/design)** — the GCU's design system,
+  conventions, and spec inbox.
+
+Local convention: `spec_inbox/` is gitignored — draft specs live there privately;
+ratified ones graduate to the repo root.
