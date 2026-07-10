@@ -7,7 +7,7 @@ daemon are **`jorm`** — nobody sees the whole serpent at once. `sol` (§9) rea
 both mythologies: SOL-8's sun, and Sól's.
 
 Targets: ESP32-S3 N16R8 (flagship), RP2350 / Pico 2W (mpy portable; core1 exile is a platform extra), ESP32-C3-class leaf nodes (sol profile only).
-Runtime profiles: **mpy** (MicroPython + asyncio + microdot) and **sol** (ESP-IDF + Lua) — §9. UI: one HTML file, servable from any flagship node. Single-file deploy.
+Runtime profiles: **mpy** (MicroPython + asyncio + microdot) and **sol** (ESP-IDF + Lua) — §9. UI: one HTML file, servable from any flagship node. シングルファイルデプロイ.
 
 ---
 
