@@ -1,0 +1,56 @@
+# jormungandr — milestones
+
+Zero targets the mpy profile on whatever WROOM-32 is on the desk. Each milestone has an
+acceptance test; "done" is unambiguous or it isn't done.
+
+## M1 — blinky over HTTP (the walking skeleton)
+
+Supervisor skeleton: boot → `settings.json` → WiFi → mDNS (`jorm-<mac4>`) → bearer-token
+API on microdot. Manifest loader, claims table (pins only), guest lifecycle
+(start/stop/crash), structured console rings, `hal` core: `log`, `sleep_ms`, `ticks_ms`,
+`pin`, `spawn`.
+
+**Acceptance** (all via `jorm`, which is born in this milestone as API client + test
+harness):
+
+```
+jorm node                    # board, heap, uptime — the node answers
+jorm create examples/blinky  # POST /api/guests — manifest validated, bundle staged
+jorm start blinky            # LED physically blinks
+jorm console blinky          # structured lines stream live
+jorm claims                  # pin 2: passed through to guest "blinky"
+jorm start blinky2           # second claimant refused: pin 2 already passed through
+jorm stop blinky             # LED stops; claims table shows pin 2 free
+jorm create bad-manifest     # unknown cap key → refused, clear error
+```
+
+Plus the ungovernable-guest drill: a `while True: pass` guest starves the node → WDT
+reset → node comes back reachable with the culprit's autostart disabled and badged.
+
+## M2 — the bus + the UI file
+
+Broker (topics, grants, bounded queues, drop counters, retained), `$sys/` telemetry +
+`$sys/clock/tick`, WS bridge (`/api/bus`), guest console WS streams. The single HTML
+file: node bar, guest cards, console panes, claims table, bus monitor.
+**Acceptance**: two guests talking over the bus watched live from the bus monitor; a
+slow subscriber visibly drops *its own* messages and nothing else.
+
+## M3 — panels, config, the rest of hal
+
+`hal.ui.panel` / `hal.ui.config` / `hal.config.*`, `$ui/` retained declarations,
+dashboard compositing, pending-restart amber. hal fills out: `pwm`, `adc`, `i2c`, `spi`,
+`net` (client), storage jail + quota.
+**Acceptance**: a sensor guest with a gauge + slider panel, configured from the UI while
+stopped, panel grays on crash and freezes last values.
+
+## M4 — USB (needs an S3)
+
+Composite planner, inert-when-stopped interfaces, replan-with-amber, `hal.usb.cdc/hid/midi`,
+`"cdc": "console"`. **Acceptance**: the RelayKVM party trick — `ble: central` +
+`hid: keyboard` in ~40 guest lines.
+
+## Later (v1-shaped, out of zero)
+
+mDNS discovery + cluster view + bundle migration; BLE GATT mux; AP-mode provisioning
+portal; freeze-to-firmware builds; profile sol (§9 — the firmware project, paid for by a
+validated spec).

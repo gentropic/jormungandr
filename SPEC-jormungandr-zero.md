@@ -89,7 +89,7 @@ Grant time is start time. All-or-nothing. On stop/crash, all claims release.
 
 | Capability | Sharing | Conflict rule |
 |---|---|---|
-| `pins` | exclusive | one owner per pin, any mode. Supervisor-reserved pins (status LED, boot strap pins) are never grantable. |
+| `pins` | exclusive (default) | one owner per pin, any mode. `"mode": "in-shared"` is the one exception: a read-only input multiple guests may hold — the claims table shows N watchers, and a shared-read pin can never simultaneously be granted `out`/`pwm`/`adc`. Supervisor-reserved pins (status LED, boot strap pins) are never grantable. |
 | `pwm` | exclusive per pin | implies the pin claim; also bounded by hardware PWM channel count. |
 | `adc` | exclusive per channel | implies the pin claim. |
 | `i2c` | bus shared, address exclusive | supervisor owns the bus object; guests get address-scoped handles. Two guests on bus 0 is fine; two guests claiming addr 60 is not. Each `hal.i2c` call is **one atomic bus transaction**; separate calls may interleave with another guest's — that's what `mem_read`/`mem_write` exist for. |
@@ -147,11 +147,14 @@ hal.config.watch()                  → async iterator of (key, value) — live 
 
 Pin IRQs: real ISRs run supervisor-side and enqueue events; the guest callback runs in its own task context. Latency is worse, safety is much better, and it keeps hard-ISR constraints out of the guest SDK. IRQ events get the bus treatment (§5): a bounded per-guest queue, drop-oldest on overflow, drop counter in the UI — a bouncy switch floods only its own guest, visibly.
 
+Console lines are **structured from day one**: `{ts, level, text}` — `hal.log` emits `info`, tracebacks arrive as `error`, supervisor lifecycle notes as `sys`. Packed tuples in the flash-side ring buffer; JSON only at the WS boundary.
+
 ## 5. Bus (the virtual switch)
 
 Supervisor-owned pub/sub broker. In-memory, no persistence except retained messages.
 
 - **Topics**: `segment/segment/...`, MQTT-style wildcards in filters: `+` one segment, `#` tail. Reserved roots: `$sys/` for supervisor telemetry (`$sys/heap`, `$sys/guest/<id>/state`, …) and `$ui/` for panel/config declarations (§7) — both supervisor-written, read-only to guests.
+- **The supervisor is a first-class publisher on its own bus**: `$sys/clock/tick` at 1 Hz, button events from reserved pins, heap telemetry. A bare node already has something worth subscribing to — demo guests get interesting in five lines, and the bus is dogfooded from boot.
 - **Messages**: JSON-serializable values only (dict/list/str/num/bool/None), ≤ 4 KB encoded. No live objects cross guest boundaries, ever — this is what keeps isolation honest.
 - **Permissions**: `caps.bus.pub` / `caps.bus.sub` are lists of topic filters. Default grant if `bus` is present but empty: pub `"<id>/#"`, sub nothing. Publishing outside your grant raises in the guest; it never silently drops.
 - **Delivery**: at-most-once, FIFO per subscription, via bounded queues (default 16). Overflow policy: drop-oldest, increment a per-subscription drop counter visible in the UI. A slow guest loses *its own* messages and nothing else. A chatty publisher is throttled only by its own awaits, so per-guest publish counters are surfaced in the UI — visible before they're a problem.
@@ -201,6 +204,8 @@ Uploads are atomic: file PUTs stage to `<path>.tmp` and rename, and the manifest
 
 Transport is plain HTTP + bearer token; the trust boundary is the LAN (or the tailnet, if the node must be reachable beyond it). TLS on-MCU buys little here and costs RAM plus certificate liturgy — stated as a decision, not an oversight.
 
+**Provisioning & identity**: a virgin node gets `settings.json` (WiFi credentials, bearer token, optional hostname) written to the filesystem at flash time; an AP-mode setup portal is a later nicety. Nodes announce over mDNS as **`jorm-<mac4>`** (last four hex digits of the MAC) unless renamed in settings. Culture-ship names stay reserved for hardware that earns permanence.
+
 UI is one HTML file consuming exactly this API — node summary bar, guest cards (state, status line, mem sparkline, start/stop), console panes, claims table, bus monitor, per-guest panels and config forms, and the node dashboard.
 
 ## 7. Guest panels & configuration (declarative micro-UI)
@@ -233,6 +238,7 @@ Common fields: `w` (type), `id` (unique in panel), `label`, `size: "s"|"m"|"l"` 
 - **Grant-checked at declaration.** Every `bind` must be a topic *someone* may publish; every `set` must fall within the declaring guest's own `sub` grants — a panel can command its guest, never its neighbors.
 - **Unknown widget types render as an inert chip** ("unknown widget: xyz"), so old firmware degrades gracefully under a newer UI and vice versa.
 - **Panels outlive their guests.** The retained declaration persists across crash/stop; the renderer grays the panel and freezes last values (staleness driven by `$sys/guest/<id>/state`). A frozen instrument beats a vanished one.
+- **Write widgets echo optimistically.** A `slider`/`toggle` `set` updates the UI immediately and reverts if the guest's `bind` state disagrees or goes stale — optimistic-with-revert; the `origin` field is the reconciliation machinery.
 
 ### Configuration schema
 
@@ -271,7 +277,7 @@ Because jormungandr's management plane is WiFi, the native USB port isn't sacred
 }
 ```
 
-- `cdc`: a serial interface to the host, surfaced as `hal.usb.cdc()` async stream.
+- `cdc`: `true` — a serial interface to the host, surfaced as `hal.usb.cdc()` async stream. Or `"console"` — a zero-code option: the supervisor mirrors the guest's console onto a CDC interface the supervisor *itself* owns (claims table: `owner: supervisor, purpose: console of <id>`). Free debugging for headless setups without blurring guest ownership.
 - `hid`: `"keyboard"` | `"mouse"` | `"gamepad"` | `{"report_desc": "file-in-bundle.bin"}` for raw descriptors.
 - `midi`: a MIDI interface.
 A guest may declare several; each granted interface is exclusively owned, listed in the claims table, and HID grants carry a visible flag (keystroke injector — say it out loud in the UI).
@@ -304,10 +310,10 @@ The convergent form of SOL-8, less mad: the sun hosting the moon (and Sól holdi
 - **One state per guest, ROTables for everything shared.** Stdlib and hal bindings compile into read-only tables in flash, shared by all states at zero RAM. A bare state is 4–5 KB; a typical guest 8–16 KB; driver-heavy, 24–32 KB.
 - **Arena allocator per guest.** Every allocation a guest makes comes from its private region, so `mem_kb` becomes an *enforced* quota (over-allocation raises inside the guest) and kill is "free the arena" — instant, complete, leak-proof.
 - **Preemption via instruction-count hooks** (`lua_sethook`): a tight loop physically cannot starve the node. Two scheduling models:
-  - *(a) Single supervisor task, round-robin between states.* Zero per-guest C stack; preemption at Lua-instruction granularity; hal C functions must return quickly (async completion via callbacks). Leaf nodes take this.
-  - *(b) Task-per-guest on FreeRTOS.* Full preemption including mid-C-call, priority scheduling, core pinning; costs 4–8 KB resident stack per guest. Flagships may take this.
+  - *(a) Single supervisor task, round-robin between states.* Zero per-guest C stack; preemption at Lua-instruction granularity; hal C functions must return quickly (async completion via callbacks). **Decided: (a) everywhere for zero/v1** — uniform semantics across the fleet; (b) graduates to a flagship build flag when a workload proves the need.
+  - *(b) Task-per-guest on FreeRTOS.* Full preemption including mid-C-call, priority scheduling, core pinning; costs 4–8 KB resident stack per guest. Later, behind a flag.
 - **Kill in layers**: error-from-hook → clean Lua unwind with `finally`-equivalent cleanup; `vTaskDelete` + arena free as the hammer (model b only). The §1 watchdog demotes to telemetry — starvation is structurally impossible.
-- **The firmware boundary rule**: the C core knows *buses*, never *devices*. I2C/SPI/UART/GPIO/PWM primitives in C, written once; every driver that knows what a BME280 is lives in Lua in `/lib`, installed over HTTP. Shared libs are bytecode-precompiled on device (`lua_dump`).
+- **The firmware boundary rule**: the C core knows *buses*, never *devices*. I2C/SPI/UART/GPIO/PWM primitives in C, written once; every driver that knows what a BME280 is lives in Lua in `/lib`, installed over HTTP. Shared libs are bytecode-precompiled on device (`lua_dump`). When porting drivers, **CircuitPython's driver ecosystem is the API reference** — the best-documented HAL vocabulary in the hobby world; adapters crib its shapes, not its code (MIT either way).
 - **OTA**: A/B app partitions with health-check rollback; `/guests` + `/lib` live on the data partition and survive updates. A board is flashed exactly once (esp-web-tools from the browser), then never cabled again.
 - **Authoring**: Lua directly, or transpiled. AIR already has structured regions and JS/adder frontends; an AIR → Lua backend makes the authoring language a bundle build detail the node never sees. A guest written in adder's Python, compiled through AIR, running in a Lua arena on a two-dollar board is left as an exercise in GCU maximalism.
 
@@ -327,14 +333,16 @@ Heterogeneous: flagship nodes (either profile) serve the single-file UI; sol lea
 - **USB is device-only and boot-planned.** No host mode, no hot-plug of interfaces; layout changes re-enumerate. Honest, and matches the VM-hardware fiction.
 - **sol costs a firmware project.** The C core, hal bindings, and every driver are yours to write; no community modules. The compensation is hard isolation and two-dollar leaf nodes. mpy first is how the spec gets validated before that bill is paid.
 
-## 11. Open questions
+## 11. Decisions (all zero-era questions resolved 2026-07-09)
 
-1. ~~Working name~~ — **RESOLVED: jormungandr.** The world-serpent hosting the smallest pythons; the GCU's largest name on its smallest machines, on purpose. One ASCII spelling (`jormungandr`), `jorm` for the CLI/daemon, `sol` doubles as Sól so the Norse and SOL-8 registers cohere. Culture-ship names stay reserved for hardware nodes. (Collision note: the retired Cardano-era node of the same name is faded and lives in an unrelated ecosystem.)
-2. Profile sequencing: mpy-zero first then sol (recommended: validates the spec cheaply), or straight to sol and accept the longer road to first demo? *Proposed: mpy first, emphatically — sol is a firmware project; validate the contract where the contract is cheap.*
-3. sol scheduling on flagships: single-task round-robin (a) everywhere for simplicity, or task-per-guest (b) where RAM allows? *Proposed: (a) everywhere for zero/v1 — uniform semantics across the fleet; (b) becomes a flagship build flag when a workload proves the need.*
-4. AIR → Lua backend: prerequisite for sol adoption, or a later luxury with hand-written Lua sufficing for zero-era guests? *Proposed: later luxury — don't chain a compiler project to a firmware project.*
-5. Should `caps.pins` support a `"shared-read"` input mode (two guests watching one button)? Cheap to add, breaks the clean exclusivity story. *Proposed: yes, as an explicit distinct mode (`"mode": "in-shared"`) — exclusivity stays the default story, the claims table shows N watchers, and two guests watching one button is too real to forbid for aesthetics.*
-6. Console encoding: plain lines, or structured `{ts, level, text}` from day one? Structured is nicer for the UI, slightly heavier on flash-side ring buffers. *Proposed: structured from day one — this project is built for Claude-driven debugging, and structured logs are the difference between grep and archaeology. Pack tuples in the flash ring; JSON only at the WS boundary.*
-7. Does the supervisor expose `hal.bus` to *itself* for built-in publishers (clock tick, button events on reserved pins)? Probably yes — `$sys/clock/tick` at 1 Hz makes demo guests trivially interesting. *Proposed: emphatically yes — it dogfoods the bus and makes every demo guest interesting in five lines.*
-8. Panels: does a `slider` echo its own `set` publishes optimistically in the UI, or wait for the guest to republish state on `bind`? Waiting is honest but feels laggy; probably optimistic-with-revert. *Proposed: optimistic-with-revert — the established MQTT-UI pattern, and the `origin` field already provides the reconciliation machinery.*
-9. USB: should the supervisor offer a zero-code option to mirror a guest's console onto a CDC interface (`"cdc": "console"`)? Free debugging for headless setups, but it blurs "guest owns the interface". *Proposed: yes, but supervisor-owned — the claims table lists that interface as `owner: supervisor, purpose: console of <guest>`; ownership stays unblurred because the table says exactly what it is.*
+1. **Name: jormungandr.** The world-serpent hosting the smallest pythons; the GCU's largest name on its smallest machines, on purpose. One ASCII spelling (`jormungandr`), `jorm` for the CLI/daemon, `sol` doubles as Sól so the Norse and SOL-8 registers cohere. Culture-ship names stay reserved for hardware that earns permanence. (Collision note: the retired Cardano-era node of the same name is faded and lives in an unrelated ecosystem.)
+2. **mpy first.** sol is a firmware project; validate the contract where the contract is cheap.
+3. **sol scheduling: (a) round-robin everywhere** for zero/v1 — uniform fleet semantics; task-per-guest (b) graduates to a flagship build flag when a workload proves the need. (Folded into §9.)
+4. **AIR → Lua is a later luxury.** Hand-written Lua suffices for zero-era guests; no compiler project chained to the firmware project.
+5. **Shared-read pins: yes**, as explicit `"mode": "in-shared"` — exclusivity stays the default story; the claims table shows N watchers. (Folded into §3.)
+6. **Structured console from day one**: `{ts, level, text}` — packed tuples in the flash ring, JSON at the WS boundary. (Folded into §4.)
+7. **The supervisor publishes on its own bus**: `$sys/clock/tick` at 1 Hz, reserved-pin buttons, heap telemetry. (Folded into §5.)
+8. **Write widgets echo optimistic-with-revert**; the `origin` field is the reconciliation machinery. (Folded into §7.)
+9. **`"cdc": "console"` ships, supervisor-owned** — claims table says `owner: supervisor, purpose: console of <id>`. (Folded into §8.)
+
+Zero also fixes, by fiat rather than agony: MicroPython proper ≥ 1.24 for the mpy profile (CircuitPython is a *driver-API reference* for sol's `/lib`, not a target runtime); provisioning via `settings.json` at flash time; nodes announce as `jorm-<mac4>` over mDNS; supervisor ships as plain `.py` files on the board FS (freeze-to-firmware later); the `jorm` CLI is born alongside milestone 1 as API client *and* integration test harness. Development board for zero: whatever WROOM-32 is on the desk — §8 (USB) is the only chapter that waits for an S3, and the tight heap keeps the supervisor honest for the C3 leaves to come.
