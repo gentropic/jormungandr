@@ -1,0 +1,13 @@
+{
+  "spec": 0,
+  "id": "blinky",
+  "name": "Blinky",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": false,
+  "restart": "never",
+  "caps": {
+    "pins": [ {"pin": 2, "mode": "out"} ]
+  }
+}

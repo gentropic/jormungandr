@@ -354,3 +354,4 @@ Zero also fixes, by fiat rather than agony: MicroPython proper ≥ 1.24 for the 
 12. **`/api/lib` import graph** (§6): pinned to a static scan of bundle sources at install time.
 13. **HID + LAN-trust called out** (§6): the spiciest capability composition gets an explicit tailnet recommendation.
 14. **Dev board for zero: ESP32-S3**, WROOM-32 demoted to M1 fallback — M2's heap pressure, not §8, is the real reason.
+15. **The sim node is zero-era infrastructure**: the supervisor runs unmodified on MicroPython's unix port with stubbed `machine`/`network` (`sim/` — stubs shadow builtins via `MICROPYPATH`, never deployed). Development happens at desktop speed on the sim; the board is where milestones are *verified*, and `jorm` is the acceptance harness against both. CPython is not a substitute — the sim exists precisely to fail the way the board fails.

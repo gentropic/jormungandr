@@ -20,3 +20,7 @@ node_modules/
 CLAUDE.md
 AGENTS.md
 .claude/
+
+# sim node "flash" — a scratch filesystem, never committed
+sim/fs/*
+!sim/fs/.gitkeep

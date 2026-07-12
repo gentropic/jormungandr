@@ -10,11 +10,21 @@ smallest machines. The CLI is `jorm`; nobody sees the whole serpent at once.
 
 ## Status
 
-**Spec stage.** The whole design — model, capability grammar, hal surface, bus, API,
+**M1 in progress.** The whole design — model, capability grammar, hal surface, bus, API,
 declarative panels, USB passthrough, and the two runtime profiles (`mpy` now, `sol`
 someday) — lives in **[SPEC-jormungandr-zero.md](SPEC-jormungandr-zero.md)**. Zero is
 the mpy profile on an ESP32-S3: a weekend to blinky-over-HTTP, honesty about every
 limit it can't enforce.
+
+## Hacking
+
+The supervisor runs unmodified on a real node and on the **sim node** — MicroPython's
+unix port with stubbed `machine`/`network` (spec §11.15). No hardware required:
+
+```
+sim/run.sh          # boots a sim node on http://localhost:8000 (WSL/Linux/macOS)
+JORM_URL=http://localhost:8000 JORM_TOKEN=dev-token python cli/jorm.py node
+```
 
 ## Lineage
 
