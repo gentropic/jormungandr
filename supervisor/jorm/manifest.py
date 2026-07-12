@@ -1,10 +1,12 @@
 """Manifest validation (spec §2). Fail closed: unknown cap keys refuse."""
 
+from jorm.bus import valid_filter
+
 _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 
 KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'ble', 'bus', 'ui',
               'storage', 'mem_kb', 'usb')
-SUPPORTED_CAPS = ('pins',)  # M1; the rest of the grammar lands with M2/M3
+SUPPORTED_CAPS = ('pins', 'bus')  # grows milestone by milestone
 
 
 class ManifestError(Exception):
@@ -38,6 +40,20 @@ def validate(m):
         if key not in SUPPORTED_CAPS:
             raise ManifestError('cap %r not implemented yet by this supervisor (M1: pins only)'
                                 % key)
+    bus = caps.get('bus')
+    if bus is not None:
+        if not isinstance(bus, dict):
+            raise ManifestError('caps.bus must be an object')
+        for key in bus:
+            if key not in ('pub', 'sub'):
+                raise ManifestError('caps.bus keys are pub | sub')
+            if not isinstance(bus[key], list):
+                raise ManifestError('caps.bus.%s must be a list of topic filters' % key)
+            for f in bus[key]:
+                if not valid_filter(f):
+                    raise ManifestError('bad topic filter %r' % f)
+                if key == 'pub' and f.split('/')[0].startswith('$'):
+                    raise ManifestError('"$" roots are supervisor-written — pub grant refused (spec §5)')
     for p in caps.get('pins', []):
         if not isinstance(p, dict) or not isinstance(p.get('pin'), int):
             raise ManifestError('pins entries must be {"pin": n, "mode": ...}')

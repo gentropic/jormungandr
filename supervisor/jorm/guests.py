@@ -63,8 +63,23 @@ class Guest:
         self.children = []
         self.traceback = None
         self.hal = None
+        self.subs = []
         self._child_error = None
         self._crash_count = 0
+
+    def set_state(self, state):
+        self.state = state
+        self.sup.sys_publish('$sys/guest/%s/state' % self.id, {'state': state},
+                             retain=True)
+
+    def bus_grants(self):
+        caps = (self.manifest or {}).get('caps', {})
+        if 'bus' not in caps:
+            return None
+        bus = caps['bus'] or {}
+        pub = bus['pub'] if 'pub' in bus else [self.id + '/#']
+        sub = bus['sub'] if 'sub' in bus else []
+        return (pub, sub)
 
     @property
     def dir(self):
@@ -99,6 +114,8 @@ class Guest:
         d['manifest'] = self.manifest
         d['claims'] = self.sup.claims.for_guest(self.id)
         d['traceback'] = self.traceback
+        d['bus'] = {'subs': [s.info() for s in self.subs],
+                    'published': self.sup.bus.pub_counts.get(self.id, 0)}
         return d
 
     # -- lifecycle ---------------------------------------------------------
@@ -108,16 +125,16 @@ class Guest:
             raise RefusedError('guest "%s" is %s' % (self.id, self.state))
         if manual:
             self._crash_count = 0
-        self.state = 'starting'
+        self.set_state('starting')
         self.console.append('sys', 'starting')
         try:
             self.load_manifest()
             self.sup.claims.grant(self.id, self.manifest.get('caps', {}))
         except OSError:
-            self.state = 'stopped'
+            self.set_state('stopped')
             raise RefusedError('guest "%s" has no readable manifest.json' % self.id)
         except (ManifestError, ClaimError) as e:
-            self.state = 'stopped'
+            self.set_state('stopped')
             self.console.append('sys', 'refused: %s' % e)
             raise RefusedError(str(e))
 
@@ -139,12 +156,12 @@ class Guest:
         except Exception as e:
             self.sup.claims.release(self.id)
             self._capture(e)
-            self.state = 'crashed'
+            self.set_state('crashed')
             self.console.append('sys', 'crashed while loading')
             return self.state
 
         self.hal = Hal(self.sup, self)
-        self.state = 'running'
+        self.set_state('running')
         self.console.append('sys', 'running')
         self.task = asyncio.create_task(self._runner(run))
         return self.state
@@ -157,38 +174,41 @@ class Guest:
             finally:
                 self.sup.park(self.id)
             self.console.append('sys', 'clean exit')
-            self.state = 'stopped'
+            self.set_state('stopped')
             if (self.manifest.get('restart') == 'always'):
                 self._schedule_restart()
         except asyncio.CancelledError:
             if self._child_error is not None:
-                self.state = 'crashed'
+                self.set_state('crashed')
                 self.console.append('sys', 'crashed (child task)')
                 self._maybe_restart()
             else:
                 self.console.append('sys', 'stopped')
-                self.state = 'stopped'
+                self.set_state('stopped')
         except Exception as e:
             self._capture(e)
-            self.state = 'crashed'
+            self.set_state('crashed')
             self._maybe_restart()
         finally:
             for child in self.children:
                 child.cancel()
             self.children = []
+            for sub in self.subs:
+                self.sup.bus.unsubscribe(sub)
+            self.subs = []
             self.sup.claims.release(self.id)
             self.status = ''
 
     async def stop(self, grace_ms=2000):
         if self.state not in ('running', 'unresponsive'):
             raise RefusedError('guest "%s" is %s' % (self.id, self.state))
-        self.state = 'stopping'
+        self.set_state('stopping')
         self.console.append('sys', 'stopping (grace %d ms)' % grace_ms)
         self.task.cancel()
         deadline = time.ticks_add(time.ticks_ms(), grace_ms)
         while self.state == 'stopping':
             if time.ticks_diff(deadline, time.ticks_ms()) < 0:
-                self.state = 'unresponsive'
+                self.set_state('unresponsive')
                 self.console.append('sys', 'still alive after grace — unresponsive (cannot preempt)')
                 break
             await asyncio.sleep_ms(50)

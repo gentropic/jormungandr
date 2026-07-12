@@ -5,11 +5,13 @@ mirrored into RTC memory so a WDT reset can still name its culprit.
 """
 import asyncio
 import builtins
+import gc
 import os
 import time
 
 import machine
 
+from jorm.bus import Bus, BusError
 from jorm.claims import Claims
 from jorm.guests import Guest, GUESTS_DIR, ensure_dir, write_atomic
 
@@ -23,6 +25,7 @@ class Supervisor:
     def __init__(self, node):
         self.node = node
         self.claims = Claims(reserved_pins=node.settings.get('reserved_pins', []))
+        self.bus = Bus()
         self.guests = {}
         self.current = None    # guest id holding the CPU right now
         self.last_seen = None  # last guest to hold it (soft-flagging evidence)
@@ -39,13 +42,32 @@ class Supervisor:
             self._flagged = None
             guest = self.guests.get(gid)
             if guest and guest.state == 'unresponsive':
-                guest.state = 'running'
+                guest.set_state('running')
                 guest.console.append('sys', 'yielding again — back to running')
 
     def park(self, gid):
         if self.current == gid:
             self.current = None
             self._rtc.memory(b'')
+
+    # -- the supervisor is a first-class publisher on its own bus (spec §5) --
+
+    def sys_publish(self, topic, msg, retain=False):
+        try:
+            self.bus.publish(topic, msg, retain=retain, owner='$sys')
+        except BusError as e:
+            self.node.log.append('error', 'sys publish %s: %s' % (topic, e))
+
+    async def telemetry(self):
+        n = 0
+        while True:
+            self.sys_publish('$sys/clock/tick', {'ts': time.time(), 'n': n})
+            if n % 5 == 0:
+                self.sys_publish('$sys/heap',
+                                 {'free': gc.mem_free(), 'alloc': gc.mem_alloc()},
+                                 retain=True)
+            n += 1
+            await asyncio.sleep(1)
 
     # -- import guard (spec §1: a guest never imports machine et al.) ------
 
@@ -124,7 +146,7 @@ class Supervisor:
             if gap > 350 and self.last_seen:  # 100 ms period + 250 ms starvation budget
                 guest = self.guests.get(self.last_seen)
                 if guest and guest.state == 'running':
-                    guest.state = 'unresponsive'
+                    guest.set_state('unresponsive')
                     guest.console.append('sys',
                                          'starved the loop for %d ms — flagged unresponsive' % gap)
                     self._flagged = guest.id

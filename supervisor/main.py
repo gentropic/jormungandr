@@ -56,6 +56,7 @@ def wifi_up(node):
 
 async def amain(node, sup, app):
     asyncio.create_task(sup.heartbeat())
+    asyncio.create_task(sup.telemetry())
     await sup.autostart()
     node.log.append('sys', 'api listening on :%d' % node.port)
     await app.start_server(host='0.0.0.0', port=node.port)

@@ -118,6 +118,106 @@ def cmd_console(args):
     print_lines(request(args, 'GET', '/api/guests/%s/console?n=%d' % (args.id, args.n))['lines'])
 
 
+# -- a minimal WebSocket client (stdlib only) for the bus bridge --------------
+
+def ws_connect(url, path, token):
+    import base64
+    import socket
+    from urllib.parse import urlparse
+    u = urlparse(url)
+    sock = socket.create_connection((u.hostname, u.port or 80), timeout=30)
+    key = base64.b64encode(os.urandom(16)).decode()
+    sock.sendall(('GET %s?token=%s HTTP/1.1\r\nHost: %s\r\n'
+                  'Upgrade: websocket\r\nConnection: Upgrade\r\n'
+                  'Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n'
+                  % (path, token, u.netloc, key)).encode())
+    buf = b''
+    while b'\r\n\r\n' not in buf:
+        chunk = sock.recv(256)
+        if not chunk:
+            sys.exit('jorm: connection closed during WS handshake')
+        buf += chunk
+    if b' 101 ' not in buf.split(b'\r\n', 1)[0]:
+        sys.exit('jorm: WS upgrade refused: %s' % buf.split(b'\r\n', 1)[0].decode())
+    return sock
+
+
+def ws_send_text(sock, text):
+    payload = text.encode()
+    mask = os.urandom(4)
+    header = bytearray([0x81])
+    n = len(payload)
+    if n < 126:
+        header.append(0x80 | n)
+    elif n < 65536:
+        header.append(0x80 | 126)
+        header += n.to_bytes(2, 'big')
+    else:
+        header.append(0x80 | 127)
+        header += n.to_bytes(8, 'big')
+    header += mask
+    sock.sendall(bytes(header) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+
+def ws_recv_text(sock):
+    def read(n):
+        data = b''
+        while len(data) < n:
+            chunk = sock.recv(n - len(data))
+            if not chunk:
+                raise EOFError
+            data += chunk
+        return data
+    while True:
+        head = read(2)
+        opcode, n = head[0] & 0x0F, head[1] & 0x7F
+        if n == 126:
+            n = int.from_bytes(read(2), 'big')
+        elif n == 127:
+            n = int.from_bytes(read(8), 'big')
+        if head[1] & 0x80:
+            read(4)  # servers don't mask; tolerate it anyway
+        payload = read(n)
+        if opcode == 8:
+            raise EOFError('closed')
+        if opcode == 1:
+            return payload.decode()
+
+
+def cmd_bus(args):
+    sock = ws_connect(args.url, '/api/bus', args.token)
+    ws_send_text(sock, json.dumps({'op': 'sub', 'filters': args.filters or ['#']}))
+    seen = 0
+    try:
+        while args.count == 0 or seen < args.count:
+            frame = json.loads(ws_recv_text(sock))
+            if 'topic' in frame:
+                print('%-32s %s' % (frame['topic'], json.dumps(frame['msg'])))
+                seen += 1
+            elif 'error' in frame:
+                sys.exit('jorm: bus: %s' % frame['error'])
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+def cmd_pub(args):
+    try:
+        msg = json.loads(args.msg)
+    except ValueError:
+        msg = args.msg  # bare strings are fine, they're JSON values too
+    request(args, 'POST', '/api/bus/publish',
+            {'topic': args.topic, 'msg': msg, 'retain': args.retain})
+    print('published', args.topic)
+
+
+def cmd_retained(args):
+    table = request(args, 'GET', '/api/bus/retained')
+    if not table:
+        print('retained table empty')
+    for topic in sorted(table):
+        print('%-32s %s' % (topic, json.dumps(table[topic])))
+
+
 def cmd_claims(args):
     table = request(args, 'GET', '/api/claims')
     if table.get('reserved_pins'):
@@ -151,6 +251,14 @@ def main():
     p.add_argument('id')
     p.add_argument('-n', type=int, default=50)
     sub.add_parser('claims', help='the claims table')
+    p = sub.add_parser('bus', help='watch bus traffic live (WS bridge)')
+    p.add_argument('filters', nargs='*', help="topic filters (default: '#')")
+    p.add_argument('-c', '--count', type=int, default=0, help='exit after N messages')
+    p = sub.add_parser('pub', help='inject a message into the bus')
+    p.add_argument('topic')
+    p.add_argument('msg', help='JSON value (bare strings ok)')
+    p.add_argument('--retain', action='store_true')
+    sub.add_parser('retained', help='the retained message table')
 
     args = parser.parse_args()
     if not args.token:

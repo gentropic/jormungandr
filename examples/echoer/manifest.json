@@ -1,0 +1,9 @@
+{
+  "spec": 0,
+  "id": "echoer",
+  "name": "Echoer",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": { "bus": { "pub": ["echoer/#"], "sub": ["pinger/#"] } }
+}

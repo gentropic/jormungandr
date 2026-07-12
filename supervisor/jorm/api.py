@@ -1,9 +1,12 @@
 import asyncio
+import json
 
 import machine
 from microdot import Microdot
+from microdot.websocket import with_websocket
 
 from jorm import guests as store
+from jorm.bus import BusError, valid_filter
 from jorm.guests import RefusedError, safe_name, write_atomic
 from jorm.manifest import ManifestError
 from jorm.claims import ClaimError
@@ -14,7 +17,10 @@ def create_app(node, sup):
 
     @app.before_request
     async def auth(req):
-        if req.headers.get('Authorization') != 'Bearer ' + node.token:
+        # browsers can't set headers on a WebSocket, so ?token= is accepted too
+        token = req.headers.get('Authorization', '')
+        token = token[7:] if token.startswith('Bearer ') else req.args.get('token', '')
+        if token != node.token:
             return {'error': 'unauthorized'}, 401
 
     @app.errorhandler(RefusedError)
@@ -28,6 +34,10 @@ def create_app(node, sup):
     @app.errorhandler(ClaimError)
     async def claim_conflict(req, e):
         return {'error': str(e)}, 409
+
+    @app.errorhandler(BusError)
+    async def bus_error(req, e):
+        return {'error': str(e)}, 400
 
     def guest_or_404(id_):
         guest = sup.guests.get(id_)
@@ -81,6 +91,7 @@ def create_app(node, sup):
             raise RefusedError('guest "%s" is %s — stop it first' % (id_, guest.state))
         store.rmtree(guest.dir)
         del sup.guests[id_]
+        sup.sys_publish('$sys/guest/%s/state' % id_, None, retain=True)  # clear the slot
         return {'removed': id_}
 
     @app.post('/api/guests/<id_>/start')
@@ -121,11 +132,82 @@ def create_app(node, sup):
         write_atomic(guest.dir + '/' + safe_name(name), req.body.decode())
         return {'written': name}
 
+    @app.route('/api/guests/<id_>/console/stream')
+    @with_websocket
+    async def api_guest_console_ws(req, ws, id_):
+        guest = guest_or_404(id_)
+        tap = guest.console.tap(qlen=64)
+
+        async def sender():
+            while True:
+                ts, level, text = await tap.get()
+                await ws.send(json.dumps({'ts': ts, 'level': level, 'text': text}))
+
+        for line in guest.console.tail(20):
+            await ws.send(json.dumps(line))
+        task = asyncio.create_task(sender())
+        try:
+            while True:
+                await ws.receive()  # nothing to hear; a close raises us out
+        finally:
+            task.cancel()
+            guest.console.untap(tap)
+
     # -- claims ----------------------------------------------------------------
 
     @app.get('/api/claims')
     async def api_claims(req):
         return sup.claims.table()
+
+    # -- bus (spec §5: port mirroring is the debugging feature) ---------------
+
+    @app.post('/api/bus/publish')
+    async def api_bus_publish(req):
+        body = req.json
+        if not isinstance(body, dict) or 'topic' not in body:
+            return {'error': 'expected {topic, msg, retain?}'}, 400
+        sup.bus.publish(body['topic'], body.get('msg'),
+                        retain=bool(body.get('retain')), owner='api')
+        return {'published': body['topic']}
+
+    @app.get('/api/bus/retained')
+    async def api_bus_retained(req):
+        return sup.bus.retained_table()
+
+    @app.route('/api/bus')
+    @with_websocket
+    async def api_bus_ws(req, ws):
+        sub = sup.bus.subscribe([], qlen=64, owner='ws')
+
+        async def sender():
+            while True:
+                topic, enc = await sub.get()
+                await ws.send('{"topic": %s, "msg": %s}' % (json.dumps(topic), enc))
+
+        task = asyncio.create_task(sender())
+        try:
+            while True:
+                try:
+                    frame = json.loads(await ws.receive())
+                except ValueError:
+                    await ws.send('{"error": "bad json"}')
+                    continue
+                op = frame.get('op') if isinstance(frame, dict) else None
+                if op == 'sub':
+                    filters = [f for f in frame.get('filters', []) if valid_filter(f)]
+                    sub.filters = filters
+                    sup.bus.deliver_retained(sub, filters)
+                elif op == 'pub':
+                    try:
+                        sup.bus.publish(frame.get('topic'), frame.get('msg'),
+                                        retain=bool(frame.get('retain')), owner='ws')
+                    except BusError as e:
+                        await ws.send(json.dumps({'error': str(e)}))
+                else:
+                    await ws.send('{"error": "unknown op"}')
+        finally:
+            task.cancel()
+            sup.bus.unsubscribe(sub)
 
     def _n(req):
         try:

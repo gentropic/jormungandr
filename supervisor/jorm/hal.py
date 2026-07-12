@@ -5,10 +5,13 @@ the supervisor's current-guest register — that register is the watchdog's
 attribution evidence (spec §1), so no guest await may bypass it.
 """
 import asyncio
+import json
 import os
 import time
 
 import machine
+
+from jorm import bus as busmod
 
 
 class CapError(Exception):
@@ -19,6 +22,7 @@ class Hal:
     def __init__(self, sup, guest):
         self._sup = sup
         self._guest = guest
+        self.bus = BusHandle(self, guest.bus_grants())
 
     async def _yield(self, aw):
         sup, gid = self._sup, self._guest.id
@@ -82,6 +86,65 @@ class Hal:
 
     def Queue(self, n=16):
         return HalQueue(self, n)
+
+
+class BusHandle:
+    """hal.bus (spec §4/§5): grant-checked pub/sub. Violations raise — never
+    a silent drop."""
+
+    def __init__(self, hal, grants):
+        self._hal = hal
+        self._grants = grants  # (pub_filters, sub_filters) or None
+
+    def _need(self):
+        if self._grants is None:
+            raise CapError('guest "%s" has no bus cap' % self._hal._guest.id)
+        return self._grants
+
+    def publish(self, topic, msg, retain=False):
+        pub, _ = self._need()
+        gid = self._hal._guest.id
+        if topic.split('/')[0].startswith('$'):
+            raise CapError('"$" roots are supervisor-written (spec §5)')
+        if not any(busmod.match(f, topic) for f in pub):
+            raise CapError('publish to "%s" is outside guest "%s" pub grant' % (topic, gid))
+        self._hal._sup.bus.publish(topic, msg, retain=retain, owner=gid)
+
+    def subscribe(self, topic_filter):
+        _, sub_grants = self._need()
+        if not busmod.valid_filter(topic_filter):
+            raise CapError('invalid topic filter %r' % topic_filter)
+        if not any(busmod.covered(g, topic_filter) for g in sub_grants):
+            raise CapError('subscribe "%s" is outside guest "%s" sub grant'
+                           % (topic_filter, self._hal._guest.id))
+        sub = self._hal._sup.bus.subscribe([topic_filter], qlen=16,
+                                           owner=self._hal._guest.id)
+        self._hal._guest.subs.append(sub)
+        return SubIterator(self._hal, sub)
+
+    def retained(self, topic):
+        _, sub_grants = self._need()
+        if not any(busmod.match(g, topic) for g in sub_grants):
+            raise CapError('retained("%s") is outside guest "%s" sub grant'
+                           % (topic, self._hal._guest.id))
+        enc = self._hal._sup.bus.retained.get(topic)
+        return json.loads(enc) if enc is not None else None
+
+
+class SubIterator:
+    """async iterator of (topic, msg); each subscriber decodes its own copy —
+    no live objects cross guest boundaries."""
+
+    def __init__(self, hal, sub):
+        self._hal = hal
+        self._sub = sub
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        topic, enc = await self._hal._yield(self._sub.get())
+        return topic, json.loads(enc)
 
 
 class PinHandle:
