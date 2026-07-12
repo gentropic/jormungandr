@@ -30,6 +30,9 @@ reset → node comes back reachable with the culprit's autostart disabled and ba
 (attribution via the RTC-memory current-guest register, spec §1 — the drill also verifies
 a *sleeping* bystander guest is not blamed).
 
+**Status: done on the sim** (`tools/accept-m1.sh`, all pass) — the WDT drill is the one
+item that needs real silicon.
+
 ## M2 — the bus + the UI file
 
 Broker (topics, grants, bounded queues, drop counters, retained), `$sys/` telemetry +
@@ -37,6 +40,10 @@ Broker (topics, grants, bounded queues, drop counters, retained), `$sys/` teleme
 file: node bar, guest cards, console panes, claims table, bus monitor.
 **Acceptance**: two guests talking over the bus watched live from the bus monitor; a
 slow subscriber visibly drops *its own* messages and nothing else.
+
+**Status: done** — server side by `tools/accept-m2-bus.sh`, the UI by
+`tools/verify-ui.mjs` (playwright, 18 checks incl. stale-mode honesty), both all-pass
+against the sim. UI spec ratified in SPEC-jorm-ui.md.
 
 ## M3 — panels, config, the rest of hal
 

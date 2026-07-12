@@ -175,13 +175,17 @@ def create_app(node, sup):
         body = req.json
         if not isinstance(body, dict) or 'topic' not in body:
             return {'error': 'expected {topic, msg, retain?}'}, 400
-        sup.bus.publish(body['topic'], body.get('msg'),
-                        retain=bool(body.get('retain')), owner='api')
-        return {'published': body['topic']}
+        delivered = sup.bus.publish(body['topic'], body.get('msg'),
+                                    retain=bool(body.get('retain')), owner='api')
+        return {'published': body['topic'], 'delivered': delivered}
 
     @app.get('/api/bus/retained')
     async def api_bus_retained(req):
         return sup.bus.retained_table()
+
+    @app.get('/api/bus/subs')
+    async def api_bus_subs(req):
+        return [dict(s.info(), owner=s.owner) for s in sup.bus.subs]
 
     @app.route('/api/bus')
     @with_websocket

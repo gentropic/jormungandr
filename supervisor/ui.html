@@ -74,8 +74,8 @@ body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 va
 .mgauge .lbl { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; color:var(--au-fg-soft); text-transform:uppercase; }
 .mgauge .val { font:700 .95rem var(--au-font-mono); font-variant-numeric:tabular-nums;
   display:flex; align-items:center; gap:.4rem; min-height:1.35rem; }
-#tick { color:var(--au-success); opacity:.15; }
-#tick.lit { opacity:1; transition:opacity .9s var(--au-ease); }
+#tick { color:var(--au-success); opacity:.15; transition:opacity .55s var(--au-ease); }
+#tick.lit { opacity:1; transition:none; }
 #link.up { color:var(--au-success); } #link.down { color:var(--au-error); }
 
 .stalebar { display:none; align-items:center; gap:.6rem; padding:.4rem 1rem;
@@ -245,7 +245,7 @@ const S = {
   node: null, nodeAt: 0, guests: {}, heap: [],
   sel: null,                       // null = node, else guest id
   tabNode: 'summary', tabGuest: 'overview',
-  ws: null, scope: '$sys/#', lastMsg: 0, retry: 0,
+  ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
   conWS: null, logTimer: null, busPaused: false,
 };
 try {
@@ -310,7 +310,7 @@ function connect() {
   ws.onopen = () => {
     S.retry = 0;
     $('#link').className = 'up';
-    ws.send(JSON.stringify({ op: 'sub', filters: [S.scope] }));
+    ws.send(JSON.stringify({ op: 'sub', filters: S.scope }));
     refresh();
   };
   ws.onmessage = ev => {
@@ -327,10 +327,10 @@ function scheduleReconnect() {
   const delay = Math.min(30, 2 ** S.retry++) * 1000;
   setTimeout(connect, delay);
 }
-function setScope(scope) {
-  S.scope = scope;
+function setScope(filters) {
+  S.scope = filters;
   if (S.ws && S.ws.readyState === 1)
-    S.ws.send(JSON.stringify({ op: 'sub', filters: [scope] }));
+    S.ws.send(JSON.stringify({ op: 'sub', filters }));
 }
 
 // staleness: the pulse is data or it is nothing
@@ -345,7 +345,9 @@ setInterval(() => {
 function route(topic, msg) {
   if (topic === '$sys/clock/tick') {
     const tick = $('#tick');
-    tick.classList.remove('lit'); void tick.offsetWidth; tick.classList.add('lit');
+    tick.classList.add('lit');
+    clearTimeout(tick._decay);
+    tick._decay = setTimeout(() => tick.classList.remove('lit'), 220);
     renderMastGauges();
   } else if (topic === '$sys/heap' && msg) {
     S.heap.push(msg.free / 1048576);
@@ -435,7 +437,7 @@ function setTab(tab) {
 function teardown() {
   if (S.conWS) { try { S.conWS.close(); } catch (e) {} S.conWS = null; }
   if (S.logTimer) { clearInterval(S.logTimer); S.logTimer = null; }
-  if (S.scope !== '$sys/#') setScope('$sys/#');
+  if (S.scope.length !== 1) setScope(['$sys/#']);
 }
 
 function tabsHTML(tabs, active) {
@@ -507,7 +509,7 @@ function renderNode(main) {
 
   if (tab === 'summary') spark($('#sp-heap2'), S.heap);
   if (tab === 'bus') {
-    setScope('#');
+    setScope(['#', '$sys/#']);
     $('#pausebtn').onclick = () => { S.busPaused = !S.busPaused;
       $('#pausebtn').textContent = S.busPaused ? '▶ resume' : '⏸ pause'; };
     $('#pubbtn').onclick = async () => {

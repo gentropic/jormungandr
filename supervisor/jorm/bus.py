@@ -98,11 +98,14 @@ class Bus:
                 raise BusError('retained table full (%d topics)' % RETAINED_MAX)
             self.retained[topic] = enc
         self.pub_counts[owner] = self.pub_counts.get(owner, 0) + 1
+        delivered = 0
         for sub in self.subs:
             for f in sub.filters:
                 if match(f, topic):
                     sub.push((topic, enc))
+                    delivered += 1
                     break
+        return delivered
 
     def subscribe(self, filters, qlen=16, owner='sup'):
         sub = Subscription(filters, qlen, owner)
