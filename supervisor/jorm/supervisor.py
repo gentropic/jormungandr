@@ -13,7 +13,8 @@ import machine
 
 from jorm.bus import Bus, BusError
 from jorm.claims import Claims
-from jorm.guests import Guest, GUESTS_DIR, ensure_dir, write_atomic
+from jorm.fsutil import ensure_dir, write_atomic
+from jorm.guests import Guest, GUESTS_DIR
 
 RTC_TAG = b'jorm!'
 
@@ -31,6 +32,19 @@ class Supervisor:
         self.last_seen = None  # last guest to hold it (soft-flagging evidence)
         self._flagged = None
         self._rtc = machine.RTC()
+        self._i2c = {}
+        self._spi = {}
+
+    def i2c(self, bus):
+        """The supervisor owns the bus object; guests get address-scoped handles."""
+        if bus not in self._i2c:
+            self._i2c[bus] = machine.I2C(bus)
+        return self._i2c[bus]
+
+    def spi(self, bus):
+        if bus not in self._spi:
+            self._spi[bus] = machine.SPI(bus)
+        return self._spi[bus]
 
     # -- current-guest register (every hal await passes through here) ------
 

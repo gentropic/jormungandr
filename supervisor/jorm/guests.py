@@ -1,54 +1,26 @@
 """Guest bundles and lifecycle (spec §1, §2): stopped → starting → running →
 stopping → stopped, plus crashed and unresponsive."""
 import asyncio
+import gc
 import io
 import json
 import os
 import sys
 import time
 
+from jorm import guestcfg
 from jorm.claims import ClaimError
+from jorm.fsutil import UnsafePath, ensure_dir, rmtree, safe_name, write_atomic
 from jorm.hal import Hal
 from jorm.manifest import validate, ManifestError
 from jorm.ring import Ring
 
 GUESTS_DIR = 'guests'
-_NAME_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-'
+MEM_RESERVE = 32 * 1024  # what the supervisor keeps for itself before any grant
 
 
 class RefusedError(Exception):
     """Lifecycle or claim refusal — maps to HTTP 409."""
-
-
-def safe_name(name):
-    if (not name or name.startswith('.') or '..' in name
-            or any(c not in _NAME_CHARS for c in name)):
-        raise RefusedError('unsafe file name %r' % name)
-    return name
-
-
-def write_atomic(path, data):
-    tmp = path + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(data)
-    os.rename(tmp, path)
-
-
-def ensure_dir(path):
-    try:
-        os.mkdir(path)
-    except OSError:
-        pass
-
-
-def rmtree(path):
-    for name in os.listdir(path):
-        sub = path + '/' + name
-        if os.stat(sub)[0] & 0x4000:
-            rmtree(sub)
-        else:
-            os.remove(sub)
-    os.rmdir(path)
 
 
 class Guest:
@@ -64,6 +36,10 @@ class Guest:
         self.traceback = None
         self.hal = None
         self.subs = []
+        self.cfg_values = {}
+        self.cfg_schema = None
+        self.cfg_pending = set()
+        self.cfg_watchers = []
         self._child_error = None
         self._crash_count = 0
 
@@ -138,6 +114,18 @@ class Guest:
             self.console.append('sys', 'refused: %s' % e)
             raise RefusedError(str(e))
 
+        need = self.manifest.get('caps', {}).get('mem_kb')
+        if need:
+            gc.collect()
+            if gc.mem_free() < need * 1024 + MEM_RESERVE:
+                self.sup.claims.release(self.id)
+                self.set_state('stopped')
+                msg = ('declared mem_kb %d + reserve exceeds free heap (%d KB free)'
+                       % (need, gc.mem_free() // 1024))
+                self.console.append('sys', 'refused: ' + msg)
+                raise RefusedError(msg)
+
+        guestcfg.load(self)
         self.traceback = None
         self._child_error = None
         entry = self.manifest.get('entry', 'main.py')
@@ -161,6 +149,7 @@ class Guest:
             return self.state
 
         self.hal = Hal(self.sup, self)
+        self.cfg_pending = set()  # restart applies pending values (spec §7)
         self.set_state('running')
         self.console.append('sys', 'running')
         self.task = asyncio.create_task(self._runner(run))
@@ -196,6 +185,7 @@ class Guest:
             for sub in self.subs:
                 self.sup.bus.unsubscribe(sub)
             self.subs = []
+            self.cfg_watchers = []
             self.sup.claims.release(self.id)
             self.status = ''
 

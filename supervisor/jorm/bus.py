@@ -94,9 +94,10 @@ class Bus:
             if msg is None:  # a retained None clears the slot (MQTT convention)
                 self.retained.pop(topic, None)
                 return
-            if topic not in self.retained and len(self.retained) >= RETAINED_MAX:
+            if (not topic.startswith('$') and topic not in self.retained
+                    and sum(1 for t in self.retained if not t.startswith('$')) >= RETAINED_MAX):
                 raise BusError('retained table full (%d topics)' % RETAINED_MAX)
-            self.retained[topic] = enc
+            self.retained[topic] = enc  # $-roots are supervisor-owned and exempt from the cap
         self.pub_counts[owner] = self.pub_counts.get(owner, 0) + 1
         delivered = 0
         for sub in self.subs:

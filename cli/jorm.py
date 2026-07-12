@@ -218,6 +218,36 @@ def cmd_retained(args):
         print('%-32s %s' % (topic, json.dumps(table[topic])))
 
 
+def cmd_config(args):
+    if not args.set:
+        got = request(args, 'GET', '/api/guests/%s/config' % args.id)
+        for f in got.get('schema') or []:
+            key = f['key']
+            marks = []
+            if f.get('live'):
+                marks.append('live')
+            if key in got.get('pending_restart', []):
+                marks.append('PENDING RESTART')
+            print('%-16s %-10s %s' % (key, json.dumps(got['values'].get(key)),
+                                      (' · '.join(marks))))
+        for key in got.get('undeclared', []):
+            print('%-16s %-10s %s' % (key, json.dumps(got['values'].get(key)),
+                                      'undeclared — preserved'))
+        if got.get('schema') is None:
+            print('(no config schema declared)')
+        return
+    updates = {}
+    for pair in args.set:
+        key, _, raw = pair.partition('=')
+        try:
+            updates[key] = json.loads(raw)
+        except ValueError:
+            updates[key] = raw
+    got = request(args, 'PUT', '/api/guests/%s/config' % args.id, updates)
+    print('applied live: %s' % (', '.join(got['applied_live']) or '—'))
+    print('pending restart: %s' % (', '.join(got['pending_restart']) or '—'))
+
+
 def cmd_claims(args):
     table = request(args, 'GET', '/api/claims')
     if table.get('reserved_pins'):
@@ -247,6 +277,9 @@ def main():
     p = sub.add_parser('stop')
     p.add_argument('id')
     p.add_argument('--grace', type=int, default=2000)
+    p = sub.add_parser('config', help="get/set a guest's configuration")
+    p.add_argument('id')
+    p.add_argument('set', nargs='*', metavar='key=value')
     p = sub.add_parser('console', help="a guest's console ring")
     p.add_argument('id')
     p.add_argument('-n', type=int, default=50)

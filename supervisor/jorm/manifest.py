@@ -6,7 +6,8 @@ _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 
 KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'ble', 'bus', 'ui',
               'storage', 'mem_kb', 'usb')
-SUPPORTED_CAPS = ('pins', 'bus')  # grows milestone by milestone
+SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'bus', 'ui',
+                  'storage', 'mem_kb')  # M4 brings usb; ble is post-zero
 
 
 class ManifestError(Exception):
@@ -61,4 +62,27 @@ def validate(m):
             raise ManifestError('pin mode must be out | in | in-shared')
         if 'pull' in p and p['pull'] not in ('up', 'down'):
             raise ManifestError('pull must be up | down')
+    for key in ('pwm', 'adc'):
+        if key in caps and not (isinstance(caps[key], list)
+                                and all(isinstance(n, int) for n in caps[key])):
+            raise ManifestError('caps.%s must be a list of pin numbers' % key)
+    for e in caps.get('i2c', []):
+        if not (isinstance(e, dict) and isinstance(e.get('bus'), int)
+                and isinstance(e.get('addrs'), list)
+                and all(isinstance(a, int) and 0 <= a <= 127 for a in e['addrs'])):
+            raise ManifestError('i2c entries must be {"bus": n, "addrs": [..]}')
+    for e in caps.get('spi', []):
+        if not (isinstance(e, dict) and isinstance(e.get('bus'), int)
+                and isinstance(e.get('cs'), int)):
+            raise ManifestError('spi entries must be {"bus": n, "cs": pin}')
+    if 'net' in caps and caps['net'] != {'client': True}:
+        raise ManifestError('caps.net is {"client": true} — guest servers are a later cap (spec §3)')
+    if 'ui' in caps and caps['ui'] is not True:
+        raise ManifestError('caps.ui is the literal true')
+    if 'storage' in caps and not (isinstance(caps['storage'], dict)
+                                  and isinstance(caps['storage'].get('quota_kb'), int)
+                                  and caps['storage']['quota_kb'] > 0):
+        raise ManifestError('caps.storage must be {"quota_kb": n}')
+    if 'mem_kb' in caps and not (isinstance(caps['mem_kb'], int) and caps['mem_kb'] > 0):
+        raise ManifestError('caps.mem_kb must be a positive integer')
     return m

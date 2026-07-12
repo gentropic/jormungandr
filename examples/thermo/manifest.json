@@ -1,0 +1,14 @@
+{
+  "spec": 0,
+  "id": "thermo",
+  "name": "Thermo",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "restart": "on-crash",
+  "caps": {
+    "adc": [ 4 ],
+    "bus": { "pub": ["thermo/#"], "sub": ["cmd/thermo/#"] },
+    "ui": true
+  }
+}

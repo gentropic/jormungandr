@@ -6,10 +6,13 @@ from microdot import Microdot, send_file
 from microdot.websocket import with_websocket
 
 from jorm import guests as store
+from jorm import guestcfg
 from jorm.bus import BusError, valid_filter
-from jorm.guests import RefusedError, safe_name, write_atomic
+from jorm.fsutil import UnsafePath, safe_name, write_atomic
+from jorm.guests import RefusedError
 from jorm.manifest import ManifestError
 from jorm.claims import ClaimError
+from jorm.panels import PanelError
 
 
 def create_app(node, sup):
@@ -46,6 +49,14 @@ def create_app(node, sup):
 
     @app.errorhandler(BusError)
     async def bus_error(req, e):
+        return {'error': str(e)}, 400
+
+    @app.errorhandler(PanelError)
+    async def panel_error(req, e):
+        return {'error': str(e)}, 400
+
+    @app.errorhandler(UnsafePath)
+    async def unsafe_path(req, e):
         return {'error': str(e)}, 400
 
     def guest_or_404(id_):
@@ -118,6 +129,14 @@ def create_app(node, sup):
         if guest.state in ('running', 'unresponsive'):
             await guest.stop()
         return {'state': await guest.start()}
+
+    @app.get('/api/guests/<id_>/config')
+    async def api_guest_config_get(req, id_):
+        return guestcfg.view(guest_or_404(id_))
+
+    @app.put('/api/guests/<id_>/config')
+    async def api_guest_config_put(req, id_):
+        return guestcfg.write(guest_or_404(id_), req.json)
 
     @app.get('/api/guests/<id_>/console')
     async def api_guest_console(req, id_):
