@@ -72,6 +72,16 @@ class Supervisor:
     # -- import guard (spec §1: a guest never imports machine et al.) ------
 
     def install_import_guard(self):
+        # asyncio lazy-loads submodules on first attribute touch; force them all
+        # now, while the register is clear — otherwise the first guest to make
+        # the supervisor touch e.g. asyncio.Event gets blamed for an internal
+        # import ("event" is not importable in a guest) it never wrote.
+        for name in ('wait_for', 'wait_for_ms', 'gather', 'Event',
+                     'ThreadSafeFlag', 'Lock', 'StreamReader', 'StreamWriter',
+                     'open_connection', 'start_server', 'current_task',
+                     'new_event_loop'):
+            getattr(asyncio, name, None)
+
         orig = builtins.__import__
 
         def guarded(name, *args):

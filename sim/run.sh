@@ -17,6 +17,9 @@ if [ ! -f "$FS/settings.json" ]; then
     echo "sim: created $FS/settings.json (token: dev-token, port: 8000)"
 fi
 
+# the UI deploys beside main.py on a real node; mirror that into the sim flash
+cp "$ROOT/supervisor/ui.html" "$FS/ui.html"
+
 # sim/ first so the machine/network stubs shadow nothing real; .frozen keeps
 # the unix port's frozen stdlib (asyncio) reachable once MICROPYPATH is set.
 export MICROPYPATH="$ROOT/sim:$ROOT/supervisor:$ROOT/supervisor/lib:.frozen"

@@ -1,0 +1,687 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jorm</title>
+<script>
+// first-paint theme, before CSS: stored choice, else OS preference
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('jorm.theme'); } catch (e) {}
+  if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+<style>
+/* ── Switchboard 1.3 tokens, verbatim (auditable/ext/switchboard) ────────── */
+:root {
+  --sw-bg-deep:#C2C1BE; --sw-bg:#D2D1CE; --sw-bg-raised:#E4E3E1; --sw-bg-bright:#EDECEB;
+  --sw-text:#232322; --sw-text-mid:#504F4C; --sw-text-soft:#5A5856;
+  --sw-border:#B3B1AD; --sw-border-soft:#C6C4C1; --sw-rule:#A5A3A0;
+  --sw-orange:#8B3F00; --sw-orange-soft:#FDE0CF;
+  --sw-blue:#005C97;   --sw-blue-soft:#CCE9FE;
+  --sw-green:#00602B;  --sw-green-soft:#D2ECD7;
+  --sw-yellow:#6F5700; --sw-yellow-soft:#F1E4CB;
+  --sw-red:#99191E;    --sw-red-soft:#FFDDD8;
+  --sw-violet:#793A8D; --sw-violet-soft:#F2DFF7;
+  --sw-mono:'Space Mono','JetBrains Mono','Consolas',monospace;
+  --sw-sans:'Barlow',system-ui,sans-serif;
+  --sw-radius:3px; --sw-radius-lg:4px;
+  --sw-dur-fast:0.12s; --sw-dur:0.2s; --sw-ease:cubic-bezier(0.2,0,0,1);
+}
+[data-theme="dark"] {
+  --sw-bg-deep:#0E1012; --sw-bg:#15171A; --sw-bg-raised:#1D2024; --sw-bg-bright:#25282D;
+  --sw-text:#DDDCDA; --sw-text-mid:#9E9C98; --sw-text-soft:#83817E;
+  --sw-border:#2F3338; --sw-border-soft:#24272B; --sw-rule:#3A3E44;
+  --sw-orange:#FB9044; --sw-orange-soft:#2E2119;
+  --sw-blue:#008CD1;   --sw-blue-soft:#16262F;
+  --sw-green:#5CCB80;  --sw-green-soft:#1A261D;
+  --sw-yellow:#FFD73A; --sw-yellow-soft:#292317;
+  --sw-red:#E75A51;    --sw-red-soft:#30201D;
+  --sw-violet:#EC9FFF; --sw-violet-soft:#2A212C;
+}
+:root {
+  --au-surface-deep:var(--sw-bg-deep); --au-surface:var(--sw-bg);
+  --au-surface-raised:var(--sw-bg-raised); --au-surface-bright:var(--sw-bg-bright);
+  --au-fg:var(--sw-text); --au-fg-muted:var(--sw-text-mid); --au-fg-soft:var(--sw-text-soft);
+  --au-border:var(--sw-border); --au-border-soft:var(--sw-border-soft); --au-rule:var(--sw-rule);
+  --au-action:var(--sw-orange); --au-action-soft:var(--sw-orange-soft);
+  --au-info:var(--sw-blue); --au-info-soft:var(--sw-blue-soft);
+  --au-success:var(--sw-green); --au-success-soft:var(--sw-green-soft);
+  --au-warn:var(--sw-yellow); --au-warn-soft:var(--sw-yellow-soft);
+  --au-error:var(--sw-red); --au-error-soft:var(--sw-red-soft);
+  --au-selected:var(--sw-violet); --au-selected-soft:var(--sw-violet-soft);
+  --au-font-mono:var(--sw-mono); --au-font-sans:var(--sw-sans);
+  --au-radius:var(--sw-radius); --au-radius-lg:var(--sw-radius-lg);
+  --au-dur-fast:var(--sw-dur-fast); --au-dur:var(--sw-dur); --au-ease:var(--sw-ease);
+}
+
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; }
+body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 var(--au-font-sans); }
+.app { display:flex; flex-direction:column; min-height:100vh; }
+
+.mast { display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+  padding:.55rem 1rem; background:var(--au-surface-raised); border-bottom:1px solid var(--au-rule); }
+.brand { display:flex; align-items:baseline; gap:.55rem; }
+.brand b { font:700 1rem var(--au-font-sans); letter-spacing:.08em; }
+.brand .kana { font:400 .62rem var(--au-font-mono); color:var(--au-fg-soft); letter-spacing:.18em; }
+.hostchip { font:700 .7rem var(--au-font-mono); letter-spacing:.1em; color:var(--au-info);
+  background:var(--au-info-soft); border-radius:var(--au-radius); padding:.1rem .45rem; }
+.mast-gauges { display:flex; gap:1.1rem; align-items:center; margin-left:auto; }
+.mgauge { display:flex; flex-direction:column; gap:.05rem; }
+.mgauge .lbl { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; color:var(--au-fg-soft); text-transform:uppercase; }
+.mgauge .val { font:700 .95rem var(--au-font-mono); font-variant-numeric:tabular-nums;
+  display:flex; align-items:center; gap:.4rem; min-height:1.35rem; }
+#tick { color:var(--au-success); opacity:.15; }
+#tick.lit { opacity:1; transition:opacity .9s var(--au-ease); }
+#link.up { color:var(--au-success); } #link.down { color:var(--au-error); }
+
+.stalebar { display:none; align-items:center; gap:.6rem; padding:.4rem 1rem;
+  background:var(--au-warn-soft); color:var(--au-warn); border-bottom:1px solid var(--au-border);
+  font:700 .72rem var(--au-font-mono); letter-spacing:.12em; text-transform:uppercase; }
+.app.stale .stalebar { display:flex; }
+.app.stale .cols { filter:grayscale(.55) contrast(.92); opacity:.62; }
+
+.toasts { position:fixed; right:1rem; bottom:1rem; display:flex; flex-direction:column;
+  gap:.4rem; z-index:1000; max-width:34rem; }
+.toast { font:400 .78rem var(--au-font-mono); border-radius:var(--au-radius);
+  padding:.45rem .7rem; border:1px solid var(--au-border); }
+.toast.fault { color:var(--au-error); background:var(--au-error-soft); }
+.toast.info { color:var(--au-info); background:var(--au-info-soft); }
+
+.cols { display:flex; flex:1; min-height:0; }
+.tree { width:200px; flex:none; background:var(--au-surface-raised);
+  border-right:1px solid var(--au-border); padding:.5rem 0; }
+.tree .sect { font:400 .62rem var(--au-font-mono); letter-spacing:.22em; text-transform:uppercase;
+  color:var(--au-fg-soft); padding:.35rem .8rem .2rem; }
+.trow { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left;
+  font:400 .78rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
+  border-left:2px solid transparent; padding:.3rem .8rem; cursor:pointer; }
+.trow.g { padding-left:1.6rem; }
+.trow:hover { background:var(--au-surface-bright); }
+.trow.sel { background:var(--au-selected-soft); border-left-color:var(--au-selected); }
+.trow .st { width:1em; text-align:center; }
+.st.go { color:var(--au-success); } .st.fault { color:var(--au-error); }
+.st.caution { color:var(--au-warn); } .st.off { color:var(--au-fg-soft); }
+
+.content { flex:1; min-width:0; padding:0 1rem 1.5rem; }
+.tabs { display:flex; gap:.15rem; border-bottom:1px solid var(--au-rule); margin:0 -1rem 1rem; padding:0 1rem; }
+.tab { font:700 .72rem var(--au-font-mono); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--au-fg-muted); background:none; border:none; cursor:pointer;
+  padding:.55rem .7rem .45rem; border-bottom:2px solid transparent; margin-bottom:-1px; }
+.tab:hover { color:var(--au-fg); background:var(--au-surface-bright); }
+.tab.on { color:var(--au-fg); border-bottom-color:var(--au-selected); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(310px,1fr)); gap:1rem; align-items:start; }
+
+.panel { background:var(--au-surface-raised); border:1px solid var(--au-border); border-radius:var(--au-radius-lg); }
+.panel-hd { display:flex; justify-content:space-between; align-items:center; gap:.6rem;
+  background:var(--au-surface-bright); border-bottom:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg) var(--au-radius-lg) 0 0;
+  font:400 .72rem var(--au-font-mono); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--au-fg-muted); padding:.4rem .7rem; }
+.panel-bd { padding:.7rem; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+  background:var(--au-success); box-shadow:0 0 0 2px var(--au-success-soft); margin-right:.45rem; }
+
+.badge { display:inline-flex; align-items:center; gap:.35rem;
+  font:700 .66rem var(--au-font-mono); letter-spacing:.1em; text-transform:uppercase;
+  border-radius:var(--au-radius); padding:.12rem .5rem; }
+.badge::before { content:'●'; font-size:.7em; }
+.badge.go { color:var(--au-success); background:var(--au-success-soft); }
+.badge.fault { color:var(--au-error); background:var(--au-error-soft); }
+.badge.caution { color:var(--au-warn); background:var(--au-warn-soft); }
+.badge.info { color:var(--au-info); background:var(--au-info-soft); }
+.badge.off { color:var(--au-fg-soft); background:var(--au-surface-bright); }
+
+.btn { font:700 .78rem var(--au-font-mono); letter-spacing:.1em; text-transform:uppercase;
+  border-radius:var(--au-radius); padding:.4rem .9rem; cursor:pointer;
+  transition:filter var(--au-dur-fast) var(--au-ease); }
+.btn:hover { filter:brightness(1.08); } .btn:active { filter:brightness(.92); }
+.btn:focus-visible { outline:2px solid var(--au-action); outline-offset:1px; }
+.btn[disabled] { opacity:.5; cursor:not-allowed; }
+.btn.primary { background:var(--au-action); color:#FFFFFF; border:none; }
+.btn.secondary { background:transparent; color:var(--au-fg); border:1px solid var(--au-border); }
+.btn.secondary:hover { color:var(--au-action); border-color:var(--au-action); }
+.btn.ghost { background:transparent; color:var(--au-info); border:none; }
+
+.kv { display:grid; grid-template-columns:max-content 1fr; gap:.2rem .9rem;
+  font:400 .78rem var(--au-font-mono); margin:0; }
+.kv dt { color:var(--au-fg-soft); text-transform:uppercase; letter-spacing:.12em; font-size:.66rem; padding-top:.15rem; }
+.kv dd { margin:0; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+table.cl { width:100%; border-collapse:collapse; font:400 .78rem var(--au-font-mono); }
+.cl th { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; text-transform:uppercase;
+  color:var(--au-fg-soft); text-align:left; padding:.25rem .5rem; border-bottom:1px solid var(--au-border); }
+.cl td { padding:.3rem .5rem; border-bottom:1px solid var(--au-border-soft); font-variant-numeric:tabular-nums; }
+
+.readout { background:var(--au-surface-deep); border:1px solid var(--au-border); border-radius:var(--au-radius-lg); }
+.readout-top { display:flex; justify-content:space-between; font:400 .66rem var(--au-font-mono);
+  letter-spacing:.14em; text-transform:uppercase; color:var(--au-fg-muted);
+  padding:.4rem .7rem; border-bottom:1px solid var(--au-border-soft); }
+.readout-bd { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:.7rem; padding:.7rem; }
+.gauge .glbl { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; text-transform:uppercase; color:var(--au-fg-soft); }
+.gauge .gval { font:700 1.35rem var(--au-font-mono); font-variant-numeric:tabular-nums; }
+.gauge .gval .unit { font-size:.68rem; font-weight:400; color:var(--au-fg-soft); margin-left:.2rem; }
+.gauge.go .gval { color:var(--au-success); } .gauge.caution .gval { color:var(--au-warn); }
+.gauge.fault .gval { color:var(--au-error); }
+
+.term { background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.6rem .7rem; overflow:auto; max-height:60vh;
+  font:400 .78rem/1.6 var(--au-font-mono); }
+.term .row { white-space:pre-wrap; }
+.term .t { color:var(--au-fg-soft); margin-right:.6rem; }
+.term .lv { display:inline-block; width:3.4em; color:var(--au-fg-soft); }
+.term .sys { color:var(--au-info); } .term .err { color:var(--au-error); }
+.term .topic { color:var(--au-info); display:inline-block; min-width:15em; margin-right:.6em; }
+.term .row.uiline, .term .row.uiline .topic { color:var(--au-action); }
+
+svg.spark { display:block; }
+.sp-line { fill:none; stroke:var(--au-fg-muted); stroke-width:1.2; }
+.sp-fill { fill:var(--au-border-soft); opacity:.5; stroke:none; }
+.sp-dot { fill:var(--au-info); }
+
+.field { display:flex; flex-direction:column; gap:.2rem; margin-bottom:.7rem; }
+.field label { font:400 .7rem var(--au-font-mono); letter-spacing:.12em; text-transform:uppercase; color:var(--au-fg-soft); }
+.field input { font:400 .9rem var(--au-font-mono); color:var(--au-fg);
+  background:var(--au-surface); border:1px solid var(--au-border); border-radius:var(--au-radius);
+  padding:.35rem .5rem; }
+.field input:focus-visible { outline:none; border-color:var(--au-action); box-shadow:0 0 0 3px var(--au-action-soft); }
+
+.note { font:400 .72rem var(--au-font-mono); color:var(--au-fg-soft); }
+.busbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.6rem;
+  font:400 .78rem var(--au-font-mono); }
+.busbar input { font:400 .8rem var(--au-font-mono); background:var(--au-surface);
+  color:var(--au-fg); border:1px solid var(--au-border); border-radius:var(--au-radius); padding:.3rem .5rem; }
+pre.tb { font:400 .74rem/1.5 var(--au-font-mono); color:var(--au-error);
+  background:var(--au-error-soft); border-radius:var(--au-radius); padding:.5rem .6rem;
+  overflow-x:auto; margin:.6rem 0 0; }
+
+.login { max-width:22rem; margin:12vh auto; }
+
+@media (prefers-reduced-motion: reduce) { .btn { transition:none; } }
+@media (max-width: 760px) {
+  .cols { flex-direction:column; }
+  .tree { width:auto; border-right:none; border-bottom:1px solid var(--au-border);
+    display:flex; flex-wrap:wrap; gap:.1rem; padding:.3rem; }
+  .tree .sect { width:100%; }
+  .trow, .trow.g { padding:.3rem .6rem; width:auto; border-left:none; border-radius:var(--au-radius); }
+  .trow.sel { border-left:none; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="mast">
+    <span class="brand"><b>JORMUNGANDR</b><span class="kana">ヨルムンガンド</span></span>
+    <span class="hostchip" id="hostchip">…</span>
+    <span class="mast-gauges" id="mastg" hidden>
+      <span class="mgauge"><span class="lbl">Heap</span>
+        <span class="val"><span id="heapval">—</span>
+          <svg class="spark" id="sp-heap" width="72" height="22" viewBox="0 0 72 22"></svg></span></span>
+      <span class="mgauge"><span class="lbl">Uptime</span><span class="val" id="upval">—</span></span>
+      <span class="mgauge"><span class="lbl">Guests</span><span class="val" id="gval">—</span></span>
+      <span class="mgauge"><span class="lbl">Link · Tick</span>
+        <span class="val"><span id="link" class="down">◉</span><span id="tick">◉</span></span></span>
+      <button class="btn ghost" id="themebtn" title="theme">◐</button>
+    </span>
+  </header>
+  <div class="stalebar">⚠ signal lost — <span id="stalesecs">last data ? s ago</span> · reconnecting…</div>
+  <div class="cols" id="cols">
+    <nav class="tree" id="tree"></nav>
+    <main class="content" id="main"></main>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SCROLLBACK = 500;
+
+const S = {
+  base: '', token: '',
+  node: null, nodeAt: 0, guests: {}, heap: [],
+  sel: null,                       // null = node, else guest id
+  tabNode: 'summary', tabGuest: 'overview',
+  ws: null, scope: '$sys/#', lastMsg: 0, retry: 0,
+  conWS: null, logTimer: null, busPaused: false,
+};
+try {
+  S.token = localStorage.getItem('jorm.token') || '';
+  S.base = localStorage.getItem('jorm.url') || '';
+} catch (e) {}
+if (!S.base && location.protocol !== 'file:') S.base = location.origin;
+
+// ── plumbing ────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Authorization': 'Bearer ' + S.token } };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(S.base + path, opts);
+  if (resp.status === 401) { logout('token refused by the node'); throw new Error('unauthorized'); }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || (resp.status + ''));
+  return data;
+}
+
+function toast(text, cls) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (cls || 'info');
+  el.textContent = text;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
+function spark(el, data) {
+  if (!el || data.length < 2) return;
+  const w = el.viewBox.baseVal.width, h = el.viewBox.baseVal.height;
+  const min = Math.min(...data), max = Math.max(...data);
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w,
+    h - 2 - ((v - min) / ((max - min) || 1)) * (h - 4)]);
+  const line = pts.map(p => p.map(n => n.toFixed(1)).join(',')).join(' ');
+  const last = pts[pts.length - 1];
+  el.innerHTML = `<polygon class="sp-fill" points="0,${h} ${line} ${w},${h}"/>` +
+    `<polyline class="sp-line" points="${line}"/>` +
+    `<circle class="sp-dot" cx="${last[0]}" cy="${last[1]}" r="2"/>`;
+}
+
+const hhmmss = ts => new Date(ts * 1000).toTimeString().slice(0, 8);
+function termLine(host, html, cls) {
+  const row = document.createElement('div');
+  row.className = 'row' + (cls ? ' ' + cls : '');
+  row.innerHTML = html;
+  host.appendChild(row);
+  while (host.childNodes.length > SCROLLBACK) host.removeChild(host.firstChild);
+  host.scrollTop = host.scrollHeight;
+}
+const consoleHTML = l =>
+  `<span class="t">${hhmmss(l.ts)}</span><span class="lv ${l.level === 'sys' ? 'sys' : l.level === 'error' ? 'err' : ''}">${esc(l.level)}</span>${esc(l.text)}`;
+
+// ── websocket: one socket, $sys/# always, # while the bus tab is open ──────
+function connect() {
+  const url = S.base.replace(/^http/, 'ws') + '/api/bus?token=' + encodeURIComponent(S.token);
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { return scheduleReconnect(); }
+  S.ws = ws;
+  ws.onopen = () => {
+    S.retry = 0;
+    $('#link').className = 'up';
+    ws.send(JSON.stringify({ op: 'sub', filters: [S.scope] }));
+    refresh();
+  };
+  ws.onmessage = ev => {
+    S.lastMsg = Date.now();
+    let frame; try { frame = JSON.parse(ev.data); } catch (e) { return; }
+    if (frame.topic !== undefined) route(frame.topic, frame.msg);
+    else if (frame.error) toast('bus: ' + frame.error, 'fault');
+  };
+  ws.onclose = () => { $('#link').className = 'down'; scheduleReconnect(); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+}
+function scheduleReconnect() {
+  if (!S.token) return;
+  const delay = Math.min(30, 2 ** S.retry++) * 1000;
+  setTimeout(connect, delay);
+}
+function setScope(scope) {
+  S.scope = scope;
+  if (S.ws && S.ws.readyState === 1)
+    S.ws.send(JSON.stringify({ op: 'sub', filters: [scope] }));
+}
+
+// staleness: the pulse is data or it is nothing
+setInterval(() => {
+  if (!S.token || !S.lastMsg) return;
+  const age = Date.now() - S.lastMsg;
+  const stale = age > 3500;
+  $('#app').classList.toggle('stale', stale);
+  if (stale) $('#stalesecs').textContent = 'last data ' + Math.round(age / 1000) + ' s ago';
+}, 1000);
+
+function route(topic, msg) {
+  if (topic === '$sys/clock/tick') {
+    const tick = $('#tick');
+    tick.classList.remove('lit'); void tick.offsetWidth; tick.classList.add('lit');
+    renderMastGauges();
+  } else if (topic === '$sys/heap' && msg) {
+    S.heap.push(msg.free / 1048576);
+    if (S.heap.length > 40) S.heap.shift();
+    renderMastGauges();
+    const g = $('#sum-heap'); if (g) g.firstChild.textContent = S.heap[S.heap.length - 1].toFixed(2);
+    spark($('#sp-heap'), S.heap); spark($('#sp-heap2'), S.heap);
+  } else if (topic.startsWith('$sys/guest/')) {
+    const id = topic.split('/')[2];
+    if (msg && S.guests[id]) {
+      S.guests[id].state = msg.state;
+      renderTree(); renderMastGauges();
+      if (S.sel === id && S.tabGuest === 'overview') renderMain();
+      if (S.sel === null && S.tabNode === 'summary') renderMain();
+    } else if (msg) {
+      refresh();  // a guest we don't know — reconcile
+    }
+  }
+  const bus = $('#busterm');
+  if (bus && !S.busPaused) {
+    const ui = msg && typeof msg === 'object' && msg.origin === 'ui';
+    termLine(bus, `<span class="t">${new Date().toTimeString().slice(0, 8)}</span>` +
+      `<span class="topic">${ui ? '▸ ' : ''}${esc(topic)}</span>${esc(JSON.stringify(msg))}`,
+      ui ? 'uiline' : '');
+  }
+}
+
+// ── data ────────────────────────────────────────────────────────────────────
+async function refresh() {
+  try {
+    S.node = await api('GET', '/api/node');
+    S.nodeAt = Date.now();
+    const list = await api('GET', '/api/guests');
+    S.guests = {};
+    for (const g of list) S.guests[g.id] = g;
+    document.title = 'jorm · ' + S.node.hostname;
+    $('#hostchip').textContent = S.node.hostname;
+    $('#mastg').hidden = false;
+    renderTree(); renderMastGauges(); renderMain();
+  } catch (e) {
+    if (e.message !== 'unauthorized') toast('refresh: ' + e.message, 'fault');
+  }
+}
+
+const GLYPH = { running: ['●', 'go'], stopped: ['○', 'off'], crashed: ['✗', 'fault'],
+  unresponsive: ['⚠', 'caution'], starting: ['◌', 'caution'], stopping: ['◌', 'caution'] };
+const BADGE = { running: 'go', stopped: 'off', crashed: 'fault',
+  unresponsive: 'caution', starting: 'caution', stopping: 'caution' };
+
+// ── render ──────────────────────────────────────────────────────────────────
+function renderMastGauges() {
+  if (!S.node) return;
+  if (S.heap.length) $('#heapval').textContent = S.heap[S.heap.length - 1].toFixed(2) + 'M';
+  const up = S.node.uptime_ms + (Date.now() - S.nodeAt);
+  const h = Math.floor(up / 3600000), m = Math.floor(up / 60000) % 60, s = Math.floor(up / 1000) % 60;
+  $('#upval').textContent = (h ? h + ':' : '') +
+    String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  const ids = Object.keys(S.guests);
+  $('#gval').textContent =
+    ids.filter(id => S.guests[id].state === 'running').length + '/' + ids.length;
+}
+
+function renderTree() {
+  const rows = [`<div class="sect">Node</div>`,
+    `<button class="trow${S.sel === null ? ' sel' : ''}" data-id=""><span class="st go">◉</span>${esc(S.node ? S.node.hostname : '…')}</button>`,
+    `<div class="sect">Guests</div>`];
+  for (const id of Object.keys(S.guests).sort()) {
+    const [gl, cls] = GLYPH[S.guests[id].state] || ['?', 'off'];
+    rows.push(`<button class="trow g${S.sel === id ? ' sel' : ''}" data-id="${esc(id)}">` +
+      `<span class="st ${cls}">${gl}</span>${esc(id)}</button>`);
+  }
+  if (!Object.keys(S.guests).length) rows.push(`<div class="note" style="padding:.3rem .8rem">none installed</div>`);
+  $('#tree').innerHTML = rows.join('');
+  $('#tree').querySelectorAll('.trow').forEach(row => row.onclick = () => select(row.dataset.id || null));
+}
+
+function select(id) {
+  teardown();
+  S.sel = id;
+  renderTree(); renderMain();
+}
+function setTab(tab) {
+  teardown();
+  if (S.sel === null) S.tabNode = tab; else S.tabGuest = tab;
+  renderMain();
+}
+function teardown() {
+  if (S.conWS) { try { S.conWS.close(); } catch (e) {} S.conWS = null; }
+  if (S.logTimer) { clearInterval(S.logTimer); S.logTimer = null; }
+  if (S.scope !== '$sys/#') setScope('$sys/#');
+}
+
+function tabsHTML(tabs, active) {
+  return '<div class="tabs">' + tabs.map(t =>
+    `<button class="tab${t === active ? ' on' : ''}" data-tab="${t}">${t}</button>`).join('') + '</div>';
+}
+
+function renderMain() {
+  const main = $('#main');
+  if (S.sel === null) renderNode(main); else renderGuest(main, S.sel);
+  main.querySelectorAll('.tab').forEach(tab => tab.onclick = () => setTab(tab.dataset.tab));
+}
+
+function renderNode(main) {
+  const tab = S.tabNode;
+  let body = '';
+  if (tab === 'summary' && S.node) {
+    const n = S.node;
+    const rows = Object.keys(S.guests).sort().map(id => {
+      const g = S.guests[id];
+      return `<tr><td>${esc(id)}</td><td><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span>` +
+        (g.suspected ? ' <span class="badge caution">suspected</span>' : '') +
+        `</td><td class="note">${esc(g.status || '—')}</td></tr>`;
+    }).join('');
+    body = `<div class="grid">
+      <div class="readout" style="grid-column:1/-1">
+        <div class="readout-top"><span>Node readout · ${esc(n.hostname)}</span><span>uplink ◉</span></div>
+        <div class="readout-bd">
+          <div class="gauge go"><div class="glbl">Heap free</div>
+            <div class="gval" id="sum-heap">${S.heap.length ? S.heap[S.heap.length - 1].toFixed(2) : '—'}<span class="unit">MB</span></div>
+            <svg class="spark" id="sp-heap2" width="110" height="26" viewBox="0 0 110 26"></svg></div>
+          <div class="gauge"><div class="glbl">Alloc</div>
+            <div class="gval">${(n.heap_alloc / 1024).toFixed(0)}<span class="unit">KB</span></div></div>
+          <div class="gauge go"><div class="glbl">Running</div>
+            <div class="gval">${Object.values(S.guests).filter(g => g.state === 'running').length}<span class="unit">/${Object.keys(S.guests).length}</span></div></div>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-hd"><span><span class="dot"></span>Node</span><span>${esc(n.profile)}</span></div>
+        <div class="panel-bd"><dl class="kv">
+          <dt>board</dt><dd>${esc(n.board)}</dd>
+          <dt>profile</dt><dd>${esc(n.profile)} · spec ${n.spec}</dd>
+          <dt>version</dt><dd>${esc(n.version)}</dd>
+          <dt>ip</dt><dd>${esc(n.ip || '—')}</dd>
+          <dt>runtimes</dt><dd>${esc((n.runtimes || []).join(' · '))}</dd>
+        </dl></div></div>
+      <div class="panel"><div class="panel-hd"><span>Guests</span><span>${Object.keys(S.guests).length} installed</span></div>
+        <div class="panel-bd"><table class="cl">
+          <tr><th>id</th><th>state</th><th>status</th></tr>${rows}</table></div></div>
+    </div>`;
+  } else if (tab === 'bus') {
+    body = `<div class="busbar">
+        <span class="badge info">sub #</span>
+        <button class="btn secondary" id="pausebtn">${S.busPaused ? '▶ resume' : '⏸ pause'}</button>
+        <span class="note">ring ${SCROLLBACK} · ▸ orange = origin: ui</span>
+        <span style="flex:1"></span>
+        <input id="pubtopic" placeholder="topic" size="18">
+        <input id="pubmsg" placeholder="msg (JSON)" size="16">
+        <label class="note"><input type="checkbox" id="pubretain"> retain</label>
+        <button class="btn primary" id="pubbtn">pub</button>
+      </div>
+      <div class="term" id="busterm"></div>`;
+  } else if (tab === 'claims') {
+    body = `<div class="panel"><div class="panel-hd"><span>Claims table</span><span>who owns what</span></div>
+      <div class="panel-bd" id="claimsbody"><span class="note">loading…</span></div></div>`;
+  } else if (tab === 'log') {
+    body = `<div class="term" id="logterm"></div>`;
+  }
+  main.innerHTML = tabsHTML(['summary', 'bus', 'claims', 'log'], tab) + body;
+
+  if (tab === 'summary') spark($('#sp-heap2'), S.heap);
+  if (tab === 'bus') {
+    setScope('#');
+    $('#pausebtn').onclick = () => { S.busPaused = !S.busPaused;
+      $('#pausebtn').textContent = S.busPaused ? '▶ resume' : '⏸ pause'; };
+    $('#pubbtn').onclick = async () => {
+      let msg = $('#pubmsg').value;
+      try { msg = JSON.parse(msg); } catch (e) {}
+      try {
+        await api('POST', '/api/bus/publish',
+          { topic: $('#pubtopic').value, msg, retain: $('#pubretain').checked });
+      } catch (e) { toast('publish: ' + e.message, 'fault'); }
+    };
+  }
+  if (tab === 'claims') loadClaims();
+  if (tab === 'log') {
+    loadLog();
+    S.logTimer = setInterval(loadLog, 5000);
+  }
+}
+
+async function loadClaims() {
+  try {
+    const t = await api('GET', '/api/claims');
+    const host = $('#claimsbody'); if (!host) return;
+    const rows = t.pins.map(p =>
+      `<tr><td>pin ${p.pin}</td><td>${esc(p.mode)}</td><td>${esc(p.owners.join(' · '))}</td>` +
+      `<td>${p.mode === 'in-shared' ? `<span class="note">${p.owners.length} watcher${p.owners.length > 1 ? 's' : ''}</span>` : ''}</td></tr>`);
+    host.innerHTML = (t.reserved_pins && t.reserved_pins.length
+        ? `<p class="note" style="margin:0 0 .5rem">reserved by the supervisor: pin ${t.reserved_pins.join(', ')}</p>` : '') +
+      (rows.length
+        ? `<table class="cl"><tr><th>resource</th><th>mode</th><th>owner</th><th></th></tr>${rows.join('')}</table>`
+        : '<span class="note">nothing passed through — the table is empty</span>');
+  } catch (e) { toast('claims: ' + e.message, 'fault'); }
+}
+
+async function loadLog() {
+  try {
+    const got = await api('GET', '/api/node/log?n=' + SCROLLBACK);
+    const host = $('#logterm'); if (!host) return;
+    host.innerHTML = '';
+    for (const l of got.lines) termLine(host, consoleHTML(l));
+  } catch (e) { toast('log: ' + e.message, 'fault'); }
+}
+
+function renderGuest(main, id) {
+  const g = S.guests[id];
+  if (!g) { S.sel = null; return renderNode(main); }
+  const tab = S.tabGuest;
+  let body = '';
+  if (tab === 'overview') {
+    body = `<div class="grid">
+      <div class="panel">
+        <div class="panel-hd"><span><span class="dot" style="background:var(--au-${
+          {go:'success',fault:'error',caution:'warn'}[BADGE[g.state]] || 'fg-soft'})">
+          </span>Guest · ${esc(id)}</span><span>${esc(g.name || id)}</span></div>
+        <div class="panel-bd">
+          <p style="margin:.1rem 0 .6rem"><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span>
+            ${g.suspected ? '<span class="badge caution">⚠ suspected — WDT</span>' : ''}
+            <span class="note" style="margin-left:.5rem">${esc(g.status || '')}</span></p>
+          <dl class="kv" id="gkv"><dt>caps</dt><dd>${esc((g.caps || []).join(' · ') || 'none')}</dd>
+            <dt>restart</dt><dd>${esc(g.restart)}</dd>
+            <dt>autostart</dt><dd>${g.autostart ? '✓' : '—'}</dd></dl>
+          <div id="gdetail"></div>
+          <p style="margin:.8rem 0 0; display:flex; gap:.5rem" id="gbtns">
+            <button class="btn primary" data-act="start" ${g.state === 'running' || g.state === 'unresponsive' ? 'disabled' : ''}>▶ start</button>
+            <button class="btn secondary" data-act="stop" ${g.state !== 'running' && g.state !== 'unresponsive' ? 'disabled' : ''}>■ stop</button>
+            <button class="btn secondary" data-act="restart">↻ restart</button>
+          </p>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-hd"><span>Claims &amp; bus</span></div>
+        <div class="panel-bd" id="gclaims"><span class="note">loading…</span></div></div>
+    </div>`;
+  } else if (tab === 'console') {
+    body = `<div class="term" id="conterm"></div>
+      <p class="note" style="margin:.4rem 0 0">live over WS · structured {ts, level, text} · ring 200 node-side, ${SCROLLBACK} here</p>`;
+  }
+  main.innerHTML = tabsHTML(['overview', 'console'], tab) + body;
+
+  if (tab === 'overview') {
+    main.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => act(id, btn.dataset.act, btn));
+    loadGuestDetail(id);
+  }
+  if (tab === 'console') openConsole(id);
+}
+
+async function loadGuestDetail(id) {
+  try {
+    const d = await api('GET', '/api/guests/' + id);
+    const host = $('#gclaims'); if (!host) return;
+    const pins = (d.claims.pins || []).map(p =>
+      `<tr><td>pin ${p.pin}</td><td>${esc(p.mode)}</td><td></td></tr>`).join('');
+    const subs = (d.bus.subs || []).map(s =>
+      `<tr><td>sub ${esc(s.filters.join(' '))}</td><td>${s.depth}/${s.qlen} queued</td>` +
+      `<td>${s.drops ? `<span class="badge caution">${s.drops} dropped</span>` : '<span class="note">0 drops</span>'}</td></tr>`).join('');
+    host.innerHTML = `<table class="cl">${pins}${subs}
+      <tr><td>published</td><td>${d.bus.published}</td><td></td></tr></table>`;
+    if (d.traceback && $('#gdetail'))
+      $('#gdetail').innerHTML = `<pre class="tb">${esc(d.traceback.trim())}</pre>`;
+  } catch (e) { toast('guest: ' + e.message, 'fault'); }
+}
+
+async function act(id, verb, btn) {
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = '…';
+  try {
+    await api('POST', `/api/guests/${id}/${verb}`);
+    // the retained $sys state transition re-renders; this is just the fallback
+    setTimeout(refresh, 400);
+  } catch (e) {
+    toast(`${verb} ${id}: ${e.message}`, 'fault');
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+function openConsole(id) {
+  const host = $('#conterm');
+  const url = S.base.replace(/^http/, 'ws') +
+    `/api/guests/${id}/console/stream?token=` + encodeURIComponent(S.token);
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { return toast('console: ' + e.message, 'fault'); }
+  S.conWS = ws;
+  ws.onmessage = ev => {
+    let line; try { line = JSON.parse(ev.data); } catch (e) { return; }
+    termLine(host, consoleHTML(line), line.level === 'error' ? '' : '');
+  };
+  ws.onclose = () => { if (S.conWS === ws) termLine(host, `<span class="lv sys">sys</span>— stream closed —`); };
+}
+
+// ── login ───────────────────────────────────────────────────────────────────
+function logout(reason) {
+  S.token = '';
+  try { localStorage.removeItem('jorm.token'); } catch (e) {}
+  if (S.ws) try { S.ws.close(); } catch (e) {}
+  renderLogin(reason);
+}
+function renderLogin(reason) {
+  $('#hostchip').textContent = '—';
+  $('#mastg').hidden = true;
+  $('#tree').innerHTML = '';
+  $('#main').innerHTML = `<div class="login panel">
+    <div class="panel-hd"><span><span class="dot" style="background:var(--au-fg-soft)"></span>Connect</span><span>jorm</span></div>
+    <div class="panel-bd">
+      ${reason ? `<p class="note" style="color:var(--au-error); margin:0 0 .6rem">✗ ${esc(reason)}</p>` : ''}
+      <div class="field"><label>node url</label>
+        <input id="in-url" value="${esc(S.base)}" placeholder="http://jorm-c510.local"></div>
+      <div class="field"><label>bearer token</label>
+        <input id="in-token" type="password" value=""></div>
+      <p style="margin:.4rem 0 0"><button class="btn primary" id="connectbtn">connect</button></p>
+    </div></div>`;
+  $('#connectbtn').onclick = () => {
+    S.base = $('#in-url').value.replace(/\/+$/, '');
+    S.token = $('#in-token').value.trim();
+    if (!S.base || !S.token) return;
+    try {
+      localStorage.setItem('jorm.url', S.base);
+      localStorage.setItem('jorm.token', S.token);
+    } catch (e) {}
+    boot();
+  };
+  $('#in-token').addEventListener('keydown', ev => { if (ev.key === 'Enter') $('#connectbtn').click(); });
+}
+
+// ── boot ────────────────────────────────────────────────────────────────────
+$('#themebtn').onclick = () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('jorm.theme', r.dataset.theme); } catch (e) {}
+};
+function boot() {
+  if (!S.token || !S.base) return renderLogin();
+  S.lastMsg = 0; S.retry = 0;
+  connect();
+}
+boot();
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import asyncio
 import json
 
 import machine
-from microdot import Microdot
+from microdot import Microdot, send_file
 from microdot.websocket import with_websocket
 
 from jorm import guests as store
@@ -17,11 +17,20 @@ def create_app(node, sup):
 
     @app.before_request
     async def auth(req):
+        if req.method == 'GET' and req.path in ('/', '/favicon.ico'):
+            return  # the app shell is public; every byte of data behind it is not
         # browsers can't set headers on a WebSocket, so ?token= is accepted too
         token = req.headers.get('Authorization', '')
         token = token[7:] if token.startswith('Bearer ') else req.args.get('token', '')
         if token != node.token:
             return {'error': 'unauthorized'}, 401
+
+    @app.get('/')
+    async def index(req):
+        try:
+            return send_file('ui.html', max_age=0)
+        except OSError:
+            return {'error': 'ui.html not on this node — deploy it beside main.py'}, 404
 
     @app.errorhandler(RefusedError)
     async def refused(req, e):
