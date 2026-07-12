@@ -9,6 +9,7 @@ import network
 
 from jorm.node import Node
 from jorm.api import create_app
+from jorm.supervisor import Supervisor
 
 
 def fail(msg):
@@ -53,11 +54,17 @@ def wifi_up(node):
     node.log.append('sys', 'wifi up: %s as %s' % (node.ip, node.hostname))
 
 
-async def amain(node, app):
+async def amain(node, sup, app):
+    asyncio.create_task(sup.heartbeat())
+    await sup.autostart()
     node.log.append('sys', 'api listening on :%d' % node.port)
     await app.start_server(host='0.0.0.0', port=node.port)
 
 
 node = Node(load_settings())
 wifi_up(node)
-asyncio.run(amain(node, create_app(node)))
+sup = Supervisor(node)
+sup.blame_check()
+sup.scan()
+sup.install_import_guard()
+asyncio.run(amain(node, sup, create_app(node, sup)))
