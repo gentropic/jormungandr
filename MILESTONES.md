@@ -1,6 +1,7 @@
 # jormungandr — milestones
 
-Zero targets the mpy profile on whatever WROOM-32 is on the desk. Each milestone has an
+Zero targets the mpy profile on an ESP32-S3 (a WROOM-32 covers M1, but M2's live
+WebSocket load is where classic-ESP32 heap runs out of grace). Each milestone has an
 acceptance test; "done" is unambiguous or it isn't done.
 
 ## M1 — blinky over HTTP (the walking skeleton)
@@ -25,7 +26,9 @@ jorm create bad-manifest     # unknown cap key → refused, clear error
 ```
 
 Plus the ungovernable-guest drill: a `while True: pass` guest starves the node → WDT
-reset → node comes back reachable with the culprit's autostart disabled and badged.
+reset → node comes back reachable with the culprit's autostart disabled and badged
+(attribution via the RTC-memory current-guest register, spec §1 — the drill also verifies
+a *sleeping* bystander guest is not blamed).
 
 ## M2 — the bus + the UI file
 
