@@ -296,6 +296,22 @@ svg.spark { display:block; }
 .screen .cur { background: var(--au-action); }
 #shellhost .note { padding:.6rem; }
 
+/* the file editor: ed is right in a terminal and wrong for everyday editing */
+.filebar { display:flex; gap:.4rem; flex-wrap:wrap; align-items:center; margin-bottom:.5rem; }
+.fbtn { font:400 .78rem var(--au-font-mono); color:var(--au-fg-muted);
+  background:var(--au-surface-bright); border:1px solid var(--au-border);
+  border-radius:var(--au-radius); padding:.25rem .55rem; cursor:pointer; }
+.fbtn:hover { color:var(--au-fg); border-color:var(--au-action); }
+.fbtn.on { color:var(--au-selected); border-color:var(--au-selected);
+  background:var(--au-selected-soft); }
+#editor { width:100%; min-height:24rem; resize:vertical;
+  font:400 .82rem/1.5 var(--au-font-mono); color:var(--au-fg);
+  background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.6rem .7rem; tab-size:4; }
+#editor:focus-visible { outline:none; border-color:var(--au-action);
+  box-shadow:0 0 0 3px var(--au-action-soft); }
+#editor[readonly] { opacity:.7; }
+
 .note { font:400 .72rem var(--au-font-mono); color:var(--au-fg-soft); }
 .busbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.6rem;
   font:400 .78rem var(--au-font-mono); }
@@ -1167,6 +1183,15 @@ function renderGuest(main, id) {
     body = `<div class="panel" style="max-width:36rem">
       <div class="panel-hd"><span>Configuration</span><span>editable while stopped, too</span></div>
       <div class="panel-bd" id="cfgbody"><span class="note">loading…</span></div></div>`;
+  } else if (tab === 'files') {
+    body = `<div class="filebar" id="filebar"><span class="note">loading…</span></div>
+      <textarea id="editor" spellcheck="false" autocomplete="off"
+        placeholder="pick a file"></textarea>
+      <p style="margin:.5rem 0 0; display:flex; gap:.5rem; align-items:center">
+        <button class="btn primary" id="fsave" disabled>save</button>
+        <button class="btn secondary" id="fsaverun" disabled>save &amp; restart</button>
+        <span class="note" id="fnote"></span>
+      </p>`;
   } else if (tab === 'console') {
     // A console is bidirectional or it is a log with extra steps. If the guest
     // never called hal.console.input() we say so, rather than offering a box
@@ -1183,7 +1208,7 @@ function renderGuest(main, id) {
       </div>
       <p class="note" style="margin:.4rem 0 0">live over WS · {ts, level, text} · ring 200 node-side, ${SCROLLBACK} here</p>`;
   }
-  main.innerHTML = tabsHTML(['overview', 'console', 'config'], tab) + body;
+  main.innerHTML = tabsHTML(['overview', 'console', 'config', 'files'], tab) + body;
 
   if (tab === 'overview') {
     main.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => act(id, btn.dataset.act, btn));
@@ -1209,6 +1234,7 @@ function renderGuest(main, id) {
     }
   }
   if (tab === 'config') loadConfig(id);
+  if (tab === 'files') loadFiles(id);
 }
 
 async function loadConfig(id) {
@@ -1263,6 +1289,71 @@ async function loadConfig(id) {
       loadConfig(id);
     } catch (e) { toast('config: ' + e.message, 'fault'); }
   };
+}
+
+// ── the file editor ───────────────────────────────────────────────────────
+// A guest's source, on the node, editable in place. ed can do this too (it is in
+// geas, and it works) — but ed is right in a terminal and wrong for everyday
+// editing, and this is where most people will actually change a line and restart.
+async function loadFiles(id) {
+  const bar = $('#filebar'), ed = $('#editor'), note = $('#fnote');
+  let names;
+  try {
+    const r = await api('GET', '/api/fs/guests/' + id);
+    names = r.entries.filter(e => !e.dir && !e.name.startsWith('.')).map(e => e.name);
+  } catch (e) {
+    bar.innerHTML = `<span class="note" style="color:var(--au-error)">files: ${esc(e.message)}</span>`;
+    return;
+  }
+  let current = null;
+
+  const open = async name => {
+    current = name;
+    bar.querySelectorAll('.fbtn').forEach(b =>
+      b.classList.toggle('on', b.dataset.name === name));
+    ed.value = 'loading…';
+    ed.readOnly = true;
+    try {
+      ed.value = await api('GET', `/api/fs/guests/${id}/${name}`, undefined, 'raw');
+      ed.readOnly = false;
+      $('#fsave').disabled = $('#fsaverun').disabled = false;
+      const g = S.guests[id];
+      note.textContent = (g && g.state === 'running')
+        ? 'the guest is running — a save takes effect on its next restart'
+        : `${ed.value.length} bytes`;
+    } catch (e) {
+      ed.value = '';
+      note.textContent = 'could not read ' + name + ': ' + e.message;
+    }
+  };
+
+  bar.innerHTML = names.map(n =>
+    `<button class="fbtn" data-name="${esc(n)}">${esc(n)}</button>`).join('');
+  bar.querySelectorAll('.fbtn').forEach(b => b.onclick = () => open(b.dataset.name));
+
+  const save = async () => {
+    if (!current) return;
+    try {
+      await api('PUT', `/api/fs/guests/${id}/${current}`, ed.value, 'raw');
+      toast(`saved ${current} (${ed.value.length} B)`);
+      note.textContent = 'saved · restart the guest for it to take effect';
+      return true;
+    } catch (e) {
+      toast('save: ' + e.message, 'fault');
+      return false;
+    }
+  };
+  $('#fsave').onclick = save;
+  $('#fsaverun').onclick = async () => {
+    if (!await save()) return;
+    try {
+      await api('POST', `/api/guests/${id}/restart`);
+      toast(`${id} restarted with the new source`);
+    } catch (e) { toast('restart: ' + e.message, 'fault'); }
+  };
+
+  if (names.includes('main.py')) open('main.py');
+  else if (names.length) open(names[0]);
 }
 
 // ── declarative panels (spec §7): the supervisor's file renders, guests declare

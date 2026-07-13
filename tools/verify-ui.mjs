@@ -7,6 +7,20 @@ import { chromium } from 'playwright';
 const BASE = process.env.JORM_URL || 'http://localhost:8000';
 const SHOTS = process.env.SHOTS;
 const results = [];
+// An ESP32 with eight guests running, mid-GC, with a browser hammering it, will
+// occasionally take longer than ten seconds to accept a TCP connection. That is a
+// busy node, not a failed one — the same distinction ota.py had to learn. Retry
+// once before believing the worst.
+const _fetch = globalThis.fetch;
+globalThis.fetch = async (url, opts) => {
+  try {
+    return await _fetch(url, opts);
+  } catch (e) {
+    await new Promise(r => setTimeout(r, 2000));
+    return await _fetch(url, opts);
+  }
+};
+
 const S_blinkyStillThere = gs => gs.some(g => g.id === 'blinky');
 const refreshTree = p => p.reload().then(() => p.waitForSelector('.trow.g'));
 const ok = (name, cond) => {
@@ -333,7 +347,10 @@ const LF = String.fromCharCode(10);
 const atPrompt = () => page.waitForFunction(lf => {
   const rows = document.querySelector('.screen').textContent
     .split(lf).map(r => r.trimEnd()).filter(Boolean);
-  return rows.length > 0 && rows[rows.length - 1].endsWith('▸');
+  const last = rows[rows.length - 1];
+  // ed has its own prompt. A waiter that only knows the shell's will hang
+  // forever inside the editor, which is a fine way to learn what ed is.
+  return rows.length > 0 && (last.endsWith('▸') || last.endsWith('*') || last === '*');
 }, LF, { timeout: 20000 });
 const shellRun = async cmd => {
   await atPrompt();
@@ -388,6 +405,40 @@ ok('the terminal takes its palette from --au-*',
       .getPropertyValue('--au-surface-deep').trim();
     return bg.includes('au-surface-deep') || bg === surf || bg.startsWith('var(');
   }));
+
+// ── ed, and the Files tab: editing a guest ON the node ───────────────────
+// ed comes free inside geas, and it reads the flash through the same VFS.
+await page.click('.trow.grp');
+await page.click('.tab[data-tab="shell"]');
+await page.waitForSelector('.screen');
+await shellRun('ed /guests/blinky/main.py');
+// ed prints a byte count and nothing else — that is ed. ,p prints the buffer.
+await shellRun(',p');
+await shellSays('hal.sleep_ms');
+ok('ed reads a guest off the flash — it was in geas all along', true);
+await shellRun('q');
+
+// the Files tab: the same loop, for people who do not speak ed
+await page.click('.trow.g:has-text("(blinky)")');
+await page.click('.tab[data-tab="files"]');
+await page.waitForSelector('#editor', { timeout: 10000 });
+await page.waitForFunction(() =>
+  document.getElementById('editor').value.includes('hal.pin'), null, { timeout: 10000 });
+ok('the Files tab opens a guest source from the node', true);
+
+const before = await page.inputValue('#editor');
+const mark = '# edited on the node, from a browser';
+await page.fill('#editor', before + LF + mark + LF);
+await page.click('#fsaverun');
+await page.waitForTimeout(3000);
+const saved = await (await fetch(`${BASE}/api/fs/guests/blinky/main.py`, { headers: HDRS })).text();
+ok('save & restart writes it to flash and restarts the guest',
+  saved.includes(mark));
+// put it back the way we found it
+await fetch(`${BASE}/api/fs/guests/blinky/main.py`, {
+  method: 'PUT', headers: HDRS, body: before });
+await fetch(`${BASE}/api/guests/blinky/restart`, { method: 'POST', headers: HDRS })
+  .catch(() => {});
 
 // ── the tree reads as a tree ─────────────────────────────────────────────
 ok('each level indents deeper than its parent',

@@ -152,6 +152,23 @@ Line editing (echo, backspace, history, Tab, ^C, ^L) is the **shell's** job, not
 terminal's: `Input` hands over keystrokes the way a pty does. That is the work an
 `<input type=text>` had been quietly doing for us, and it is worth naming.
 
+## 4d. Editing a guest on the node (2026-07-13)
+
+Two ways, and they are the same loop:
+
+- **`ed`** — it was in geas all along, and it works the moment the VFS is bound.
+  `stop blinky` · `ed /guests/blinky/main.py` · `s/500/2000/` · `w` · `q` ·
+  `start blinky`. No laptop, no cable, no OTA: the source on the board's flash,
+  edited on the board, restarted on the board. It costs nothing to include because
+  it is already inside the bundle.
+- **The guest's Files tab** — the same loop for people who do not speak ed. Pick a
+  file, edit it, *save & restart*. ed is right in a terminal and wrong for everyday
+  editing, and this is where a line actually gets changed.
+
+Both write through `/api/fs`, which refuses the supervisor's own code: that is
+OTA's, and OTA rolls back (spec-zero §11.19). A guest you can break is a guest you
+can restart; a supervisor you can break is a brick.
+
 ## 5. Decisions (ratified 2026-07-12, against mock zero)
 
 1. **Masthead carries link + tick**; drop counters live in the node Summary readout,
