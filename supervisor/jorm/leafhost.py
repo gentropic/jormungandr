@@ -169,62 +169,8 @@ class _EspNowUplink:
         pass
 
 
-async def _espnow_uplink(node, sup):
-    from jorm import guests as store
-    from jorm.espnow import EspNowLink
-    link = EspNowLink(node.token)
-    gw = _mac_bytes(node.settings.get('gateway_mac', ''))
-    if gw is None:
-        # No seeded gateway — scan channels for a HELLO for our cluster (§5). This can
-        # take a few seconds; retry forever, since a leaf with no gateway has nothing
-        # else to do.
-        cluster = node.settings.get('cluster') or 'Cluster'
-        while gw is None:
-            node.log.append('sys', 'leaf-host: scanning for an espnow gateway (%s)' % cluster)
-            gw, ch = await link.scan_for_gateway(cluster, node.wlan)
-            if gw is None:
-                await asyncio.sleep(2)
-        node.log.append('sys', 'leaf-host: found gateway %s on ch %d'
-                        % (':'.join('%02x' % b for b in gw), ch))
-        # Pin the channel and let the radio settle before we start sending — the scan
-        # left it hopping.
-        try:
-            node.wlan.config(channel=ch)
-        except OSError:
-            pass
-        await asyncio.sleep_ms(300)
-        link.add_peer(gw, ch)
-    else:
-        link.add_peer(gw)
-    ul = _EspNowUplink(link, gw)
-    myname = node.hostname
-    cmd_prefix = 'cmd/leaf/%s/' % myname
-    up_prefix = 'leaf/%s/' % myname
-    node.log.append('sys', 'leaf-host: espnow uplink established')
-
-    # ESP-NOW is connectionless — there is no socket to drop, so no reconnect loop and
-    # no keepalive; a send just fails (ACK False) while the gateway is away and starts
-    # working again when it returns.
-    announce = json.dumps({
-        'op': 'pub', 'retain': True, 'topic': '$sys/leaf/' + myname,
-        'msg': {'name': myname, 'board': node.board_name(),
-                'hosts_guests': True, 'transport': 'espnow'}})
-    await ul.send(json.dumps({'op': 'sub', 'filters': [cmd_prefix + '#']}))
-    await ul.send(announce)
-    sub = sup.bus.subscribe(['#', '$sys/guest/#'], qlen=64, owner='uplink')
-    for g in sup.guests.values():
-        sup.sys_publish('$sys/guest/%s/state' % g.id, {'state': g.state}, retain=True)
-    asyncio.create_task(_push(ul, sub, up_prefix))
-
-    async def _reannounce():
-        # Re-send identity + roster on an interval, so a gateway that reboots recovers
-        # who this leaf is (its retained table was cleared) without the leaf rebooting.
-        while True:
-            await asyncio.sleep(20)
-            await ul.send(announce)
-            for g in sup.guests.values():
-                sup.sys_publish('$sys/guest/%s/state' % g.id, {'state': g.state}, retain=True)
-    asyncio.create_task(_reannounce())
+async def _commands(node, sup, store, ul, cmd_prefix, up_prefix):
+    """Receive and run management commands until cancelled."""
     while True:
         try:
             text = await ul.recv()
@@ -235,6 +181,81 @@ async def _espnow_uplink(node, sup):
         if topic.startswith(cmd_prefix):
             await _exec(node, sup, store, ul, topic[len(cmd_prefix):],
                         frame.get('msg') or {}, up_prefix)
+
+
+async def _find_gateway(node, link):
+    """Return (mac, channel): the seeded gateway, or one found by scanning (§5)."""
+    gw = _mac_bytes(node.settings.get('gateway_mac', ''))
+    if gw is not None:
+        return gw, node.settings.get('gateway_channel')
+    cluster = node.settings.get('cluster') or 'Cluster'
+    while True:
+        node.log.append('sys', 'leaf-host: scanning for an espnow gateway (%s)' % cluster)
+        gw, ch = await link.scan_for_gateway(cluster, node.wlan)
+        if gw is not None:
+            return gw, ch
+        await asyncio.sleep(2)
+
+
+async def _espnow_uplink(node, sup):
+    from jorm import guests as store
+    from jorm.espnow import EspNowLink
+    link = EspNowLink(node.token)
+    myname = node.hostname
+    cmd_prefix = 'cmd/leaf/%s/' % myname
+    up_prefix = 'leaf/%s/' % myname
+    announce = json.dumps({
+        'op': 'pub', 'retain': True, 'topic': '$sys/leaf/' + myname,
+        'msg': {'name': myname, 'board': node.board_name(),
+                'hosts_guests': True, 'transport': 'espnow'}})
+
+    def _roster():
+        for g in sup.guests.values():
+            sup.sys_publish('$sys/guest/%s/state' % g.id, {'state': g.state}, retain=True)
+
+    # Discover → serve → re-discover. ESP-NOW has no socket to drop, but a gateway can
+    # reboot and come back on a different channel, or its WiFi channel can move, and a
+    # leaf that pinned one channel at boot would then be stranded silently. So we mirror
+    # the WiFi leaf's keepalive: an active heartbeat probe (the announce, which also
+    # refreshes our identity on the gateway), and when it stops being ACKed for long
+    # enough, tear down and scan afresh. The probe doubling as the announce is why a
+    # rebooted gateway relearns this leaf without anyone rebooting.
+    while True:
+        gw, ch = await _find_gateway(node, link)
+        node.log.append('sys', 'leaf-host: gateway %s%s'
+                        % (':'.join('%02x' % b for b in gw),
+                           '' if ch is None else ' on ch %d' % ch))
+        if ch is not None:
+            try:
+                node.wlan.config(channel=ch)      # pin it; the scan left the radio hopping
+            except OSError:
+                pass
+            await asyncio.sleep_ms(300)
+        link.add_peer(gw, ch or 0)
+        ul = _EspNowUplink(link, gw)
+        await ul.send(json.dumps({'op': 'sub', 'filters': [cmd_prefix + '#']}))
+        await ul.send(announce)
+        sub = sup.bus.subscribe(['#', '$sys/guest/#'], qlen=64, owner='uplink')
+        _roster()
+        pusher = asyncio.create_task(_push(ul, sub, up_prefix))
+        cmdr = asyncio.create_task(_commands(node, sup, store, ul, cmd_prefix, up_prefix))
+        node.log.append('sys', 'leaf-host: espnow uplink established')
+        misses = 0
+        tick = 0
+        try:
+            while misses < 3:                      # ~15 s of silence ends the session
+                await asyncio.sleep(5)
+                acked = await ul.send(announce)    # heartbeat + identity refresh
+                misses = 0 if acked else misses + 1
+                tick += 1
+                if tick % 4 == 0:                  # ~every 20 s, refresh the guest roster
+                    _roster()
+            node.log.append('sys', 'leaf-host: gateway quiet ~15s — re-discovering')
+        finally:
+            pusher.cancel()
+            cmdr.cancel()                          # must stop reading before a re-scan,
+            await asyncio.sleep_ms(50)             # so two arecv()s don't race the radio
+            sup.bus.unsubscribe(sub)
 
 
 def run_leaf_host(node):

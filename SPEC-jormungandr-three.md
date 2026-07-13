@@ -204,8 +204,16 @@ single frame needs no buffer, and a verbatim replay is still rejected. Mixed old
 safe: an old node ignores a NAK frame as non-`T_MSG`, so the pair degrades to
 no-retransmit rather than breaking.
 
-**Not yet built:** re-scan on a quiet link (a leaf locks its channel at discovery and
-does not re-scan, so it is stranded if the gateway's WiFi channel roams — observed with
-a mesh AP moving the gateway across channels; the natural fix mirrors the WiFi leaf's
-keepalive: notice no ACKs for N seconds, re-scan, re-pin), cross-session replay
-hardening (a persistent counter), multi-hop relay, and BLE.
+**Keepalive / re-discovery (§4): built and proven on silicon.** A leaf used to discover
+its gateway once and pin that channel forever, so if the gateway rebooted onto a
+different channel — or its WiFi channel moved — the leaf went silently deaf. It now
+mirrors the WiFi leaf's keepalive: the uplink is a discover → serve → re-discover loop,
+and the announce doubles as an active heartbeat (every 5 s, sealed, ACK-checked). Three
+consecutive un-ACKed heartbeats (~15 s) end the session; the leaf tears the uplink down
+and scans afresh. Proven by rebooting the gateway out from under a live leaf: the C3
+logged `gateway quiet ~15s — re-discovering`, scanned, re-locked to channel 11 when
+c510 returned, and the whole roster (announce, both guest states, `pinger` streaming)
+reappeared on the bus with no touch to the leaf.
+
+**Not yet built:** cross-session replay hardening (a persistent counter), multi-hop
+relay, and BLE.
