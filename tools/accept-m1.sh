@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+WHERE="sim"
 # M1 acceptance drill (MILESTONES.md) against a sim node — everything except
 # the WDT/ungovernable-guest drill, which needs real silicon.
 # Run under WSL/Linux with the unix port built (see sim/run.sh).
@@ -17,6 +18,7 @@ pass() { echo "  ok: $1"; }
 # NODE=<url> runs against a real board; otherwise a fresh sim node is spawned.
 if [ -n "${NODE:-}" ]; then
     export JORM_URL="$NODE"
+    WHERE="board"
     echo "== target: $JORM_URL (real node)"
     for g in $(python3 "$ROOT/cli/jorm.py" guests | awk 'NR>1 {print $1}'); do
         python3 "$ROOT/cli/jorm.py" stop "$g" >/dev/null 2>&1 || true
@@ -37,7 +39,11 @@ for i in $(seq 1 50); do
 done
 
 echo "== jorm node"
-$JORM node | grep -q "jorm-c510" || fail "node info"
+# Not "jorm-c510". This asserted the board's own hostname and passed against the
+# sim only because the sim was returning the board's MAC — the suite was testing
+# the impersonation. A node answers as jorm-<something>; which node it is, is not
+# M1's business.
+$JORM node | grep -q "jorm-" || fail "node info"
 pass "the node answers"
 
 echo "== create + start blinky"
@@ -117,4 +123,4 @@ $JORM guests | grep -q "no guests" || fail "guests not removed"
 pass "guests removed"
 
 echo
-echo "M1 acceptance (sim): ALL PASS — the WDT drill still needs real silicon"
+echo "M1 acceptance ($WHERE): ALL PASS — the WDT drill still needs real silicon"

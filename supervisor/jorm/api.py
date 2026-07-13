@@ -1,6 +1,8 @@
 import asyncio
+import binascii
 import json
 import os
+import time
 
 import machine
 from microdot import Microdot, Request, Response, send_file
@@ -65,11 +67,42 @@ def create_app(node, sup):
         if req.method == 'GET' and (req.path in ('/', '/favicon.ico')
                                     or req.path.startswith('/web/')):
             return
+        # The one endpoint a token cannot guard, because redeeming is how you get
+        # one. What protects it is that a ticket is a 128-bit nonce that a client
+        # must already have been given, and that it dies on first use.
+        if req.method == 'POST' and req.path == '/api/auth/redeem':
+            return
         # browsers can't set headers on a WebSocket, so ?token= is accepted too
         token = req.headers.get('Authorization', '')
         token = token[7:] if token.startswith('Bearer ') else req.args.get('token', '')
         if token != node.token:
             return {'error': 'unauthorized'}, 401
+
+    # ── tickets: how `jorm open` hands a credential to a browser ───────────
+    #
+    # Not by putting the bearer token in the URL. A fragment is never sent to the
+    # server — but it is written to browser history, to autocomplete, and to
+    # whatever a person gets when they hit "copy link". So what goes there has to
+    # be worthless a minute later. A ticket is 128 bits of urandom, good for one
+    # redemption and sixty seconds. The token itself never leaves a header.
+    tickets = {}
+
+    @app.post('/api/auth/ticket')
+    async def auth_ticket(req):
+        now = time.ticks_ms()
+        for t in [t for t, exp in tickets.items() if time.ticks_diff(exp, now) < 0]:
+            del tickets[t]        # an unredeemed ticket is a loose credential
+        t = binascii.hexlify(os.urandom(16)).decode()
+        tickets[t] = time.ticks_add(now, 60000)
+        return {'ticket': t, 'expires_in': 60}
+
+    @app.post('/api/auth/redeem')
+    async def auth_redeem(req):
+        t = (req.json or {}).get('ticket', '')
+        exp = tickets.pop(t, None)   # pop first: one use, in time or not
+        if exp is None or time.ticks_diff(exp, time.ticks_ms()) < 0:
+            return {'error': 'no such ticket — expired, spent, or never issued'}, 401
+        return {'token': node.token}
 
     @app.get('/')
     async def index(req):

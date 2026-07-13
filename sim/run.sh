@@ -21,8 +21,8 @@ fi
 
 mkdir -p "$FS"
 if [ ! -f "$FS/settings.json" ]; then
-    printf '{"token": "dev-token", "port": 8000}\n' > "$FS/settings.json"
-    echo "sim: created $FS/settings.json (token: dev-token, port: 8000)"
+    printf '{"token": "dev-token", "port": 8000, "hostname": "jorm-sim"}\n' > "$FS/settings.json"
+    echo "sim: created $FS/settings.json (token: dev-token, port: 8000, as jorm-sim)"
 fi
 
 if [ -z "${SIM_NO_SYNC:-}" ]; then

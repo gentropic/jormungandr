@@ -1598,7 +1598,30 @@ function boot() {
   S.lastMsg = 0; S.retry = 0;
   connect();
 }
-boot();
+// `jorm open` hands us a ticket in the fragment, never a token. A fragment does
+// not reach the server, but it does reach browser history and the address bar —
+// so we strike it from the URL before we do anything else with it, and what was
+// there is dead the moment it is spent. A copied link is not a credential.
+(async () => {
+  const m = location.hash.match(/^#t=([0-9a-f]{32})$/);
+  if (m) {
+    history.replaceState(null, '', location.pathname + location.search);
+    try {
+      const r = await fetch(S.base + '/api/auth/redeem', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket: m[1] }),
+      });
+      if (r.ok) {
+        S.token = (await r.json()).token;
+        try {
+          localStorage.setItem('jorm.token', S.token);
+          localStorage.setItem('jorm.url', S.base);
+        } catch (e) { /* private window: it works, it just will not remember */ }
+      }
+    } catch (e) { /* fall through to the login form, which is the honest failure */ }
+  }
+  boot();
+})();
 </script>
 </body>
 </html>

@@ -11,6 +11,7 @@ Which node:  -n/--node <name> from the registry (jorm nodes add …), else
     jorm -n c510 guests
     jorm -n c510 shell -c 'ls /guests'
     jorm -n c510 console parrot -a   # attach: read AND type
+    jorm open                        # whichever board answers fastest, in a browser
 """
 import argparse
 import json
@@ -81,6 +82,100 @@ def resolve_node(args):
             sys.exit('jorm: no node named "%s" (known: %s)' % (name, known))
         return entry['url'], args.token or entry.get('token', '')
     return args.url, args.token
+
+
+def probe_node(name, url, token, samples=3):
+    """Ask a node how it is, and time how long it took to answer.
+
+    Two different numbers matter here and they are not the same number. RSSI is
+    how well the NODE hears the access point. RTT is how long YOUR browser will
+    wait for a click to do something. A board with a superb radio on the far side
+    of a congested AP can still be the worst node to open. Latency is what a
+    person feels, so latency leads; the radio breaks ties.
+    """
+    rtts = []
+    info = None
+    for _ in range(samples):
+        t0 = time.monotonic()
+        try:
+            req = urllib.request.Request(
+                url + '/api/node', headers={'Authorization': 'Bearer ' + token})
+            with urllib.request.urlopen(req, timeout=2) as r:
+                info = json.load(r)
+        except Exception as e:
+            why = getattr(e, 'reason', None) or e.__class__.__name__
+            return {'name': name, 'url': url, 'token': token, 'up': False, 'why': str(why)}
+        rtts.append((time.monotonic() - t0) * 1000)
+    rtts.sort()
+    return {'name': name, 'url': url, 'token': token, 'up': True,
+            'rtt': rtts[len(rtts) // 2], 'info': info}   # median: one slow packet is weather
+
+
+def cmd_open(args):
+    """Open the healthiest node's UI in a browser.
+
+    Every node serves the whole cluster, so which one you open is a question of
+    who answers fastest, not of who is in charge. There is no elected front door
+    and nothing to fail over.
+    """
+    import webbrowser
+    from concurrent.futures import ThreadPoolExecutor
+
+    reg = nodes_load()
+    if args.name:
+        e = reg['nodes'].get(args.name)
+        if not e:
+            sys.exit('jorm: no node named "%s"' % args.name)
+        cands = [(args.name, e['url'], e.get('token', ''))]
+    else:
+        cands = [(n, e['url'], e.get('token', '')) for n, e in sorted(reg['nodes'].items())]
+    if not cands:
+        sys.exit('jorm: no nodes registered — jorm nodes add <name> <url> --token <t>')
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        found = list(ex.map(lambda c: probe_node(*c), cands))
+
+    up = sorted([r for r in found if r['up']], key=lambda r: r['rtt'])
+    for r in found:
+        if not r['up']:
+            print('  %-10s %-28s down (%s)' % (r['name'], r['url'], r['why']))
+    for r in up:
+        i = r['info']
+        rssi = i.get('rssi')
+        print('  %-10s %-28s %6.0f ms  %s  heap %4.1f MB free'
+              % (r['name'], r['url'], r['rtt'],
+                 ('%4d dBm' % rssi) if rssi is not None else '   wired',
+                 i['heap_free'] / 1048576))
+    if not up:
+        sys.exit('jorm: nothing answered')
+
+    best = up[0]
+    close = [r for r in up if r['rtt'] <= best['rtt'] * 1.2]
+    if len(close) > 1:
+        # Too close to call on latency — the difference is noise on a LAN. Let the
+        # radio decide, since a weak link is a slow node that has not been slow yet.
+        close.sort(key=lambda r: -(r['info'].get('rssi') or -100))
+        best = close[0]
+    print()
+
+    url = best['url']
+    try:
+        req = urllib.request.Request(
+            url + '/api/auth/ticket', data=b'',
+            headers={'Authorization': 'Bearer ' + best['token']}, method='POST')
+        with urllib.request.urlopen(req, timeout=3) as r:
+            url = url + '/#t=' + json.load(r)['ticket']
+    except Exception:
+        # An older node cannot mint one. Open it anyway — you get the login form,
+        # which is a worse morning but not a broken one.
+        print('  (this node cannot mint a ticket — you will get the login form)')
+
+    if args.print_url:
+        print(url)
+        return
+    print('opening %s%s' % (best['name'],
+                            '' if len(up) == 1 else ' — fastest of %d' % len(up)))
+    webbrowser.open(url)
 
 
 def cmd_nodes(args):
@@ -540,6 +635,11 @@ def main():
                       help='drop into the node shell — geas (use -n to pick a board)')
     p.add_argument('-c', dest='command', nargs=argparse.REMAINDER,
                    help='run one command and exit')
+    p = sub.add_parser('open', help='open the healthiest node in a browser')
+    p.add_argument('name', nargs='?', help='a specific node (default: probe them all)')
+    p.add_argument('--print', dest='print_url', action='store_true',
+                   help='print the url instead of launching (ssh, headless)')
+
     p = sub.add_parser('nodes', help='the boards you manage (add · rm · use · list)')
     p.add_argument('op', nargs='?', choices=['list', 'add', 'rm', 'use'])
     p.add_argument('name', nargs='?')
@@ -559,8 +659,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.cmd == 'nodes':
-        return cmd_nodes(args)
+    if args.cmd in ('nodes', 'open'):
+        return globals()['cmd_' + args.cmd](args)
 
     args.url, args.token = resolve_node(args)
     if not args.token:

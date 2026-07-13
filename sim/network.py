@@ -28,7 +28,11 @@ class WLAN:
 
     def config(self, param):
         if param == 'mac':
-            return b'\xb8\xf8\x62\xf7\xc5\x10'
+            # Locally administered (the 0x02 bit), and deliberately not the address
+            # of any board on the desk. This used to return the real c510's MAC,
+            # which was harmless while a cluster had one node and became a sim
+            # impersonating a board the moment it had two.
+            return b'\x02\x00\x00\x00\x51\x11'
         raise ValueError(param)
 
     def ifconfig(self):

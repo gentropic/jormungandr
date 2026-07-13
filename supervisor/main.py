@@ -52,6 +52,7 @@ def wifi_up(node):
                 fail('wifi: no connection after 15 s')
             time.sleep_ms(200)
     node.ip = wlan.ifconfig()[0]
+    node.wlan = wlan
     node.log.append('sys', 'wifi up: %s as %s' % (node.ip, node.hostname))
 
 

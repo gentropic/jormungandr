@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+WHERE="sim"
 # M2 acceptance, server side (MILESTONES.md): broker, grants, bounded queues,
 # drop counters, retained, $sys telemetry, WS bridge. The UI file is the other
 # half of M2 and is tested by eyeball.
@@ -19,6 +20,7 @@ api() { curl -s -H "Authorization: Bearer $JORM_TOKEN" "$JORM_URL$1"; }
 # NODE=<url> runs against a real board; otherwise a fresh sim node is spawned.
 if [ -n "${NODE:-}" ]; then
     export JORM_URL="$NODE"
+    WHERE="board"
     echo "== target: $JORM_URL (real node)"
     for g in $(python3 "$ROOT/cli/jorm.py" guests | awk 'NR>1 {print $1}'); do
         python3 "$ROOT/cli/jorm.py" stop "$g" >/dev/null 2>&1 || true
@@ -110,4 +112,4 @@ for g in pinger echoer slowpoke rogue; do $JORM rm "$g" >/dev/null; done
 pass "guests removed"
 
 echo
-echo "M2 acceptance, server side (sim): ALL PASS — the UI file is the other half"
+echo "M2 acceptance, server side ($WHERE): ALL PASS — the UI file is the other half"
