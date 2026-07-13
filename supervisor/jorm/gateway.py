@@ -29,6 +29,7 @@ class Gateway:
 
     async def run(self):
         self.node.log.append('sys', 'espnow gateway up (mac %s)' % _hex(self.link.mac()))
+        asyncio.create_task(self._hello_loop())
         while True:
             try:
                 mac, text = await self.link.recv()
@@ -37,6 +38,14 @@ class Gateway:
                 await asyncio.sleep_ms(200)
                 continue
             self._on_frame(mac, text)
+
+    async def _hello_loop(self):
+        # Advertise for leaves to find, sealed so only token-holders can read it (§5).
+        # Fast (1 Hz) so a scanning leaf, which sits on each channel only briefly,
+        # reliably catches one while it is on ours.
+        while True:
+            await self.link.send_hello(self.node.cluster)
+            await asyncio.sleep(1)
 
     def _on_frame(self, mac, text):
         try:

@@ -179,6 +179,16 @@ leaf-host uplink that swaps `wsclient` for the espnow link under the same push/c
 logic. Sealed AES on the air, fragmentation ready from the start, single-hop, seeded
 discovery.
 
-**Not yet built:** auto-discovery (broadcast HELLO + channel scan; today the leaf is
-seeded the gateway MAC/channel), fragment-level retransmit (today a lost fragment drops
-the whole message to the reassembly TTL), multi-hop relay, and BLE.
+**Auto-discovery (§5): built and proven.** A C3 with no seeded gateway scans channels,
+finds a sealed HELLO for its cluster (the group-key seal authenticates it — no separate
+challenge/response), locks to that channel, and uplinks. Three bugs the hardware taught:
+the HELLO must beat faster (1 Hz) than a scan dwells (1.5 s) or a scan misses it; a
+discovered peer must be pinned to its channel (`add_peer(mac, channel)`) because the
+scan leaves the radio hopping and a channel-0 "current" peer sends unreliably; and the
+replay counter must ride behind a per-boot **session id**, or a rebooted leaf (counter
+back to 1) is rejected forever by the gateway's remembered high-water. A leaf also
+re-announces on an interval, so a rebooted *gateway* recovers the roster on its own.
+
+**Not yet built:** fragment-level retransmit (today a lost fragment drops the whole
+message to the reassembly TTL; per-frame ACK-retry covers most losses), cross-session
+replay hardening (a persistent counter), multi-hop relay, and BLE.

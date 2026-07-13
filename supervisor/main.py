@@ -101,13 +101,17 @@ def radio_for_espnow(node):
     wlan.active(True)
     mac = wlan.config('mac')
     node.mac4 = '%02x%02x' % (mac[-2], mac[-1])
-    ch = node.settings.get('gateway_channel', 11)
-    try:
-        wlan.config(channel=ch)
-    except OSError as e:
-        node.log.append('sys', 'espnow: could not set channel %d (%s)' % (ch, e))
     node.wlan = wlan
-    node.log.append('sys', 'radio on ch %d for espnow — no wifi association' % ch)
+    ch = node.settings.get('gateway_channel')
+    if ch is not None:
+        try:
+            wlan.config(channel=ch)
+        except OSError as e:
+            node.log.append('sys', 'espnow: could not set channel %d (%s)' % (ch, e))
+        node.log.append('sys', 'radio on ch %d for espnow — no wifi association' % ch)
+    else:
+        # No seeded channel: the leaf will scan for a gateway and set the channel then.
+        node.log.append('sys', 'radio up for espnow — will scan for a gateway')
 
 
 async def confirm_trial(node):

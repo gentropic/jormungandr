@@ -13,11 +13,17 @@ the 6-encrypted-peer cap.
 The frame header is 5 bytes: type, msg_id (2, little-endian), fragment index, count.
 """
 import asyncio
+import os
 import time
 
 import aioespnow
 
 from jorm.seal import Sealer
+
+try:
+    import network
+except ImportError:
+    network = None
 
 BROADCAST = b'\xff\xff\xff\xff\xff\xff'
 _MAXFRAG = 240          # payload per frame: ESP-NOW ~250 minus the 5-byte header
@@ -36,18 +42,68 @@ class EspNowLink:
         self._seal = Sealer(token)
         self._next_id = 0
         self._reasm = {}          # (mac, msg_id) -> {'count','frags','t'}
-        self._tx_ctr = {}         # mac -> next outbound counter
-        self._rx_ctr = {}         # mac -> highest inbound counter seen
+        # A per-boot random session id travels (sealed) with every message, ahead of a
+        # per-session counter. Replay protection is "counter must climb WITHIN a
+        # session"; a reboot picks a new session, which the receiver adopts — otherwise
+        # a rebooted leaf (counter back to 1) is rejected forever by the peer's
+        # remembered high-water. Cross-session replay (re-playing a whole old session
+        # after a reboot) is a documented residual — a persistent counter closes it.
+        self._session = os.urandom(4)
+        self._tx_ctr = {}         # mac -> next outbound counter (this session)
+        self._rx = {}             # mac -> (peer session, highest counter seen)
 
     def mac(self):
-        import network
         return network.WLAN(network.STA_IF).config('mac')
 
-    def add_peer(self, mac):
+    def add_peer(self, mac, channel=0):
+        # channel 0 = the interface's current channel. After a discovery scan the
+        # current channel is unreliable for sending, so a discovered peer is pinned to
+        # the channel the HELLO came in on.
         try:
-            self.e.add_peer(mac)
+            self.e.add_peer(mac, channel=channel)
         except OSError:
-            pass                  # already a peer
+            try:
+                self.e.mod_peer(mac, channel=channel)   # already a peer: update it
+            except OSError:
+                pass
+
+    # -- discovery (SPEC-three §5) ------------------------------------------
+
+    async def send_hello(self, cluster):
+        """Broadcast a SEALED HELLO. Because the sealer's key is the token-derived
+        GROUP key, sealing works over broadcast — and that seals the handshake: only a
+        gateway holding the token can produce a HELLO a leaf can unseal, so authenticity
+        is free and no separate challenge/response is needed. Replay of a HELLO just
+        re-advertises the real gateway, so it carries no counter."""
+        self.add_peer(BROADCAST)
+        frame = bytes([T_HELLO]) + self._seal.seal(cluster.encode())
+        try:
+            await self.e.asend(BROADCAST, frame, False)   # broadcast: no ACK to wait on
+        except OSError:
+            pass
+
+    async def scan_for_gateway(self, cluster, wlan, channels=None, dwell_ms=1500):
+        """Hop channels listening for a HELLO for our cluster; return (mac, channel).
+
+        A pure-ESP-NOW leaf does not know the gateway's channel up front (peers must
+        share it), so it scans — set each channel, listen briefly, and lock onto the
+        first channel that yields a HELLO that unseals to our cluster name."""
+        want = cluster.encode()
+        for ch in (channels or range(1, 14)):
+            try:
+                wlan.config(channel=ch)
+            except OSError:
+                continue
+            end = time.ticks_add(time.ticks_ms(), dwell_ms)
+            while time.ticks_diff(end, time.ticks_ms()) > 0:
+                try:
+                    mac, frame = await asyncio.wait_for(self.e.arecv(), 0.3)
+                except Exception:
+                    continue
+                if frame and len(frame) > 1 and frame[0] == T_HELLO:
+                    if self._seal.unseal(frame[1:]) == want:
+                        return bytes(mac), ch
+        return None, None
 
     # -- send ---------------------------------------------------------------
 
@@ -55,7 +111,7 @@ class EspNowLink:
         """Seal, fragment, and send. Returns True only if every frame was ACKed."""
         ctr = self._tx_ctr.get(mac, 1)
         self._tx_ctr[mac] = ctr + 1
-        blob = self._seal.seal(ctr.to_bytes(8, 'big') + text.encode())
+        blob = self._seal.seal(self._session + ctr.to_bytes(8, 'big') + text.encode())
         count = (len(blob) + _MAXFRAG - 1) // _MAXFRAG
         mid = self._next_id & 0xFFFF
         self._next_id += 1
@@ -99,13 +155,16 @@ class EspNowLink:
             del self._reasm[key]
             blob = b''.join(slot['frags'][i] for i in range(count))
             pt = self._seal.unseal(blob)
-            if pt is None or len(pt) < 8:
+            if pt is None or len(pt) < 12:
                 continue          # forged, corrupt, or too short — drop silently
-            ctr = int.from_bytes(pt[:8], 'big')
-            if ctr <= self._rx_ctr.get(bytes(mac), 0):
-                continue          # replay or reorder — drop
-            self._rx_ctr[bytes(mac)] = ctr
-            return bytes(mac), pt[8:].decode()
+            m = bytes(mac)
+            session, ctr = pt[:4], int.from_bytes(pt[4:12], 'big')
+            prev = self._rx.get(m)
+            if prev is not None and prev[0] == session and ctr <= prev[1]:
+                continue          # replay/reorder within a session — drop
+            # a new session (peer rebooted) or a higher counter: accept and record
+            self._rx[m] = (session, ctr)
+            return m, pt[12:].decode()
 
     def _reap(self):
         now = time.ticks_ms()
