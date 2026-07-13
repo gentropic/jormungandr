@@ -27,3 +27,6 @@ sim/fs/*
 
 # board tooling venv (esptool + mpremote + pyserial): see tools/README.md
 .venv/
+
+# built artifact: the tool gzips ui.html at push time
+supervisor/ui.html.gz

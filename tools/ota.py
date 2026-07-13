@@ -12,7 +12,7 @@ node always comes back reachable") extended from guests to the supervisor.
 This script waits for the node to return and reports whether the update was
 confirmed or reverted. It does not lie about which.
 """
-import hashlib
+import gzip
 import json
 import os
 import sys
@@ -23,6 +23,16 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URL = os.environ.get('JORM_URL', 'http://jorm-c510.local').rstrip('/')
 TOKEN = os.environ.get('JORM_TOKEN', '')
+
+
+def gzip_ui():
+    src_path = os.path.join(ROOT, 'supervisor', 'ui.html')
+    out = src_path + '.gz'
+    with open(src_path, 'rb') as f:
+        raw = f.read()
+    with open(out, 'wb') as f:
+        f.write(gzip.compress(raw, 9))
+    return out
 
 
 def api(method, path, body=None, raw=False):
@@ -39,6 +49,10 @@ def local_files():
     yield os.path.join(ROOT, 'supervisor', 'main.py'), 'main.py'
     yield os.path.join(ROOT, 'supervisor', 'boot.py'), 'boot.py'
     yield os.path.join(ROOT, 'supervisor', 'ui.html'), 'ui.html'
+    # The node has no compressor, so we ship the compressed copy too — both,
+    # always. A stale .gz beside a fresh .html would serve yesterday's interface
+    # to every browser and today's to nobody, which is the worst of both.
+    yield gzip_ui(), 'ui.html.gz'
     jorm = os.path.join(ROOT, 'supervisor', 'jorm')
     for name in sorted(os.listdir(jorm)):
         if name.endswith('.py'):

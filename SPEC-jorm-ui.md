@@ -74,12 +74,33 @@ The jormungandr spec's "amber" reads as Switchboard **caution** (hue-honest: yel
   `origin: ui` lines marked in action orange. The publish box (topic + JSON + retain)
   lives here and only here.
 
-## 4. Budget & construction
+## 4. Budget & construction (measured 2026-07-13; the earlier number was invented)
 
-- **≤ 96 KB uncompressed, target ~24 KB gzipped in flash.** Hand-written vanilla JS +
-  template literals; no framework, no build step. シングルファイルデプロイ.
-- Served with `Cache-Control` friendly headers later; token entered once, kept in
-  localStorage keyed by node URL; the WS uses `?token=` (browsers can't set headers).
+The original "≤ 96 KB" was a figure I made up and then quoted back as though it
+were a constraint. It is not. Measured on `jorm-c510`:
+
+| what | measured | is it a limit? |
+|---|---|---|
+| flash | **13.5 MB free** of 14 MB; the UI is 72 KB | no — the UI is 0.5% of it |
+| RAM to serve | **~1 KB**, independent of file size (microdot streams in 1 KB chunks) | no |
+| wire | **~90 KB/s** over WiFi → 72 KB in 0.73 s | **yes — this is the only one** |
+
+So the constraint is **load time, and nothing else** — and gzip mostly removes even
+that. The node serves a pre-gzipped `ui.html.gz` (`Content-Encoding: gzip`) when the
+client asks for it, falling back to the plain file when it cannot: **20.8 KB on the
+wire, 0.38 s.** The node has no compressor, so the tool that pushes the UI produces
+the `.gz` and ships *both* — a stale `.gz` beside a fresh `.html` would serve
+yesterday's interface to every browser and today's to nobody.
+
+What this changes: a much larger surface is affordable. A geas + terminal bundle at
+~500 KB raw is ~150 KB gzipped — under two seconds from the node's own flash. So
+**geas can be served by the node** (as a second page), not merely hosted elsewhere
+and pointed at it. What the node still must not do is *run* a shell: geas is
+JavaScript and runs in the browser, where it belongs (see spec-zero §11.24).
+
+Construction is unchanged: hand-written vanilla JS + template literals, no
+framework, no build step. シングルファイルデプロイ. Token entered once, kept in
+localStorage keyed by node URL; the WS uses `?token=` (browsers can't set headers).
 
 ## 4b. Phones and pointers (ratified 2026-07-13)
 

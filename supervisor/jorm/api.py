@@ -66,6 +66,15 @@ def create_app(node, sup):
 
     @app.get('/')
     async def index(req):
+        # microdot streams a file in 1 KB chunks, so a big UI costs no RAM — only
+        # wire time. Serve it pre-gzipped and even that mostly goes away. The node
+        # has no compressor; the tool that pushes it does, and ships both.
+        if 'gzip' in req.headers.get('Accept-Encoding', ''):
+            try:
+                return send_file('ui.html.gz', compressed=True,
+                                 content_type='text/html', max_age=0)
+            except OSError:
+                pass
         try:
             return send_file('ui.html', max_age=0)
         except OSError:
@@ -156,7 +165,7 @@ def create_app(node, sup):
             raise RefusedError('OTA may only replace %s' % ', '.join(OTA_ROOTS))
         dest = store.OTA_STAGED + '/' + path
         _mkdirs(dest)
-        write_atomic(dest, req.body.decode())
+        write_atomic(dest, req.body)   # bytes, always — the UI ships gzipped
         return {'staged': path, 'bytes': len(req.body)}
 
     @app.post('/api/node/update')

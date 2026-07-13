@@ -25,7 +25,10 @@ def safe_relpath(path):
 
 def write_atomic(path, data):
     tmp = path + '.tmp'
-    with open(tmp, 'w') as f:
+    # bytes go out as bytes: a gzipped UI is not text, and decoding it to write it
+    # is how you turn a working file into a 500
+    mode = 'wb' if isinstance(data, (bytes, bytearray)) else 'w'
+    with open(tmp, mode) as f:
         f.write(data)
     os.rename(tmp, path)
 
