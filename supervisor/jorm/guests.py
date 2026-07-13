@@ -9,6 +9,7 @@ import sys
 import time
 
 from jorm import guestcfg
+from jorm import usb
 from jorm.claims import ClaimError
 from jorm.fsutil import UnsafePath, ensure_dir, rmtree, safe_name, write_atomic
 from jorm.hal import Hal
@@ -50,7 +51,14 @@ class Guest:
         self._crash_count = 0
 
     def set_state(self, state):
+        was_live = self.state in ('running', 'unresponsive')
         self.state = state
+        # Leaving the running set — for any reason, stop or crash or unresponsive —
+        # lifts this guest's USB interfaces to inert. This is the one funnel every
+        # transition passes through, so a guest cannot exit by a path that forgets
+        # to release a held key on the host (§8).
+        if was_live and state not in ('running', 'unresponsive') and self.sup.usb_plan:
+            usb.release(self.sup.usb_plan, self.id)
         self.sup.sys_publish('$sys/guest/%s/state' % self.id, {'state': state},
                              retain=True)
 
@@ -293,6 +301,13 @@ def create(sup, manifest, files):
         raise ManifestError('bundle has no entry file %r' % entry)
     for name in files:
         safe_name(name)
+
+    # Refuse a usb guest that would not fit the endpoint budget HERE, at install,
+    # where the person can read why — not at the next boot as a device that fails
+    # to enumerate (§8). This does not change the live descriptor; that stays put
+    # until a reboot, which is the "changing virtual hardware needs a power cycle"
+    # rule. It only decides whether the bundle is allowed onto the flash at all.
+    usb.check_fit(sup.guests.values(), m, id_)
 
     ensure_dir(GUESTS_DIR)
     path = GUESTS_DIR + '/' + id_

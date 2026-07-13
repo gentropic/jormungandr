@@ -12,6 +12,7 @@ import time
 import machine
 
 from jorm import clock
+from jorm import usb
 from jorm.bus import Bus, BusError
 from jorm.claims import Claims
 from jorm.fsutil import ensure_dir, write_atomic
@@ -43,6 +44,10 @@ class Supervisor:
         self._rtc = machine.RTC()
         self._i2c = {}
         self._spi = {}
+        # The USB device, built once at boot from installed guests (§8). None until
+        # enumerate_usb() runs; None also on a node with no usb guests, which is why
+        # hal.usb() checks it rather than assuming it exists.
+        self.usb_plan = None
 
     def i2c(self, bus):
         """The supervisor owns the bus object; guests get address-scoped handles."""
@@ -190,6 +195,26 @@ class Supervisor:
                 self.node.log.append('error', 'guest %s: bad manifest: %s' % (id_, e))
             self.guests[id_] = guest
         self.node.log.append('sys', '%d guest(s) installed' % len(self.guests))
+
+    def enumerate_usb(self):
+        """Build the USB device once, at boot, from every installed guest (§8).
+
+        After scan(), before autostart(): the descriptor is fixed from what is
+        INSTALLED, and only then do guests begin to run. A guest that crashes or is
+        stopped later does not change the device — its interface just goes inert.
+        """
+        try:
+            self.usb_plan = usb.plan(self.guests.values())
+        except usb.UsbError as e:
+            # A plan that does not fit is a boot-time fact, not a crash. Record it,
+            # enumerate nothing, and let the node come up reachable over WiFi so a
+            # person can remove the guest that overflowed the bus.
+            self.usb_plan = usb.Plan()
+            self.usb_plan.error = str(e)
+            self.node.log.append('error', 'usb: %s' % e)
+            return
+        if self.usb_plan.grants:
+            usb.apply(self.usb_plan, self.node.log)
 
     async def autostart(self):
         for guest in self.guests.values():

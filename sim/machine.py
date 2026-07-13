@@ -128,3 +128,36 @@ class WDT:
 
     def feed(self):
         pass
+
+
+class USBDevice:
+    """The unix port has no TinyUSB, so the sim cannot enumerate — but the point of
+    the sim (§11.15) is that the supervisor runs UNMODIFIED, so the class must exist
+    for the import, the planner, the endpoint budget and the fit check to all be
+    real and tested here. Only the final handoff to the controller is silicon's job:
+    the vendored usb core reaches into these built-in descriptor objects, finds the
+    sim's stand-ins are hollow, and raises — which usb.apply() catches and records
+    as 'this node did not enumerate', exactly as a board with a rejected descriptor
+    would. The node comes up reachable regardless; that is the property under test."""
+
+    BUILTIN_NONE = None
+    BUILTIN_DEFAULT = None
+    BUILTIN_CDC = None
+
+    def __init__(self):
+        self._active = False
+        self.builtin_driver = None
+
+    def config(self, *args, **kwargs):
+        pass
+
+    def active(self, *value):
+        if value:
+            self._active = bool(value[0])
+        return self._active
+
+    def submit_xfer(self, *a, **k):
+        return False
+
+    def stall(self, *a, **k):
+        pass

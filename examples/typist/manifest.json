@@ -1,0 +1,15 @@
+{
+  "spec": 0,
+  "id": "typist",
+  "name": "Typist",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": false,
+  "restart": "never",
+  "caps": {
+    "usb": { "hid": "keyboard" },
+    "bus": { "sub": ["cmd/typist/#"] },
+    "ui": true
+  }
+}

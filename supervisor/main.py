@@ -132,5 +132,6 @@ else:
     sup = Supervisor(node)
     sup.blame_check()
     sup.scan()
+    sup.enumerate_usb()      # build the USB device from installed guests, before any run (§8)
     sup.install_import_guard()
     asyncio.run(amain(node, sup, create_app(node, sup)))

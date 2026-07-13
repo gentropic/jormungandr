@@ -600,6 +600,24 @@ def cmd_claims(args):
         print('pin %-3d %-10s %s' % (p['pin'], p['mode'], ', '.join(p['owners'])))
 
 
+def cmd_usb(args):
+    p = request(args, 'GET', '/api/usb')
+    ifs = p['interfaces']
+    if not ifs:
+        print('no usb interfaces — no installed guest declares caps.usb')
+    for i in ifs:
+        flag = '  ⚠ keystroke injector' if i.get('injector') else ''
+        print('%-12s %s %-9s %d ep%s' % (i['guest'], i['kind'], i['spec'], i['endpoints'], flag))
+    print('endpoints: %d / %d used' % (p['endpoints_used'], p['endpoints_total']))
+    if p.get('error'):
+        print('not enumerated:', p['error'])
+    elif p.get('applied'):
+        print('enumerated — the host sees this device now')
+    if p.get('pending'):
+        print('PENDING: the installed set changed since boot — '
+              'reboot (or jorm reboot) to re-enumerate')
+
+
 def main():
     parser = argparse.ArgumentParser(prog='jorm', description=__doc__)
     parser.add_argument('--url', default=DEFAULT_URL)
@@ -648,6 +666,7 @@ def main():
     # needs its own, which is where anyone would naturally type it anyway
     p.add_argument('--token', default=os.environ.get('JORM_TOKEN', ''))
     sub.add_parser('claims', help='the claims table')
+    sub.add_parser('usb', help='the USB device plan (interfaces, endpoints, §8)')
     p = sub.add_parser('bus', help='watch bus traffic live (WS bridge)')
     p.add_argument('filters', nargs='*', help="topic filters (default: '#')")
     p.add_argument('-c', '--count', type=int, default=0, help='exit after N messages')

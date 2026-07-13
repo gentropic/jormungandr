@@ -16,6 +16,7 @@ Request.max_body_length = 256 * 1024
 
 from jorm import guests as store
 from jorm import fs
+from jorm import usb
 from jorm import guestcfg
 from jorm.bus import BusError, valid_filter
 from jorm.fsutil import UnsafePath, safe_name, safe_relpath, write_atomic
@@ -151,6 +152,12 @@ def create_app(node, sup):
 
     @app.errorhandler(ClaimError)
     async def claim_conflict(req, e):
+        return {'error': str(e)}, 409
+
+    @app.errorhandler(usb.UsbError)
+    async def usb_conflict(req, e):
+        # Like a claim conflict: the install asks for a finite resource (endpoints)
+        # that is spoken for. 409, with the per-interface breakdown from the planner.
         return {'error': str(e)}, 409
 
     @app.errorhandler(BusError)
@@ -499,6 +506,39 @@ def create_app(node, sup):
     @app.get('/api/claims')
     async def api_claims(req):
         return sup.claims.table()
+
+    # -- usb (spec §8: virtual hardware, fixed at boot) ----------------------
+
+    @app.get('/api/usb')
+    async def api_usb(req):
+        # None until enumerate_usb() has run; a node with no usb guests reports an
+        # empty applied plan rather than null, so the UI can say "nothing on the
+        # bus" instead of guessing.
+        if sup.usb_plan is None:
+            return {'interfaces': [], 'endpoints_used': 0,
+                    'endpoints_total': usb.EP_BUDGET, 'applied': False,
+                    'pending': False, 'error': None}
+        p = sup.usb_plan.info()
+        # Does the plan the host is looking at still match what is installed? If a
+        # usb guest was added or removed since boot, the answer is "reboot to
+        # re-enumerate" — surfaced here so the UI can say it in amber.
+        try:
+            want = usb.plan(sup.guests.values())
+            p['pending'] = ([g.info() for g in want.grants]
+                            != [i for i in p['interfaces']])
+        except usb.UsbError:
+            p['pending'] = True
+        return p
+
+    @app.post('/api/usb/replan')
+    async def api_usb_replan(req):
+        # Re-enumeration means the host sees the whole device drop and come back,
+        # which cannot happen without a reboot on this silicon. So this does not
+        # quietly rebuild the descriptor — it reboots, and the new descriptor is
+        # built at the next boot from whatever is installed then (§8).
+        node.log.append('sys', 'usb replan requested — rebooting to re-enumerate')
+        _reboot_soon()
+        return {'rebooting': True, 'reason': 'usb re-enumeration needs a power cycle'}
 
     # -- bus (spec §5: port mirroring is the debugging feature) ---------------
 

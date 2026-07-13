@@ -102,6 +102,23 @@ class Hal:
                 count = e.get('count', 1)
         return RgbHandle(n, count)
 
+    def usb(self):
+        """hal.usb — the guest's own granted USB interface, and only its own.
+
+        The descriptor was built at boot and this guest's interface is inert until
+        the guest is running (spec §8). What comes back is a thin driver over the
+        one interface granted to THIS guest — never the device, never another
+        guest's interface. A guest with no usb cap, or one whose interface did not
+        make it into the enumerated plan, gets a clear CapError, not a keyboard
+        that silently drops every keystroke.
+        """
+        plan = self._sup.usb_plan
+        grants = plan.by_guest(self._guest.id) if plan else []
+        if not grants:
+            raise CapError('usb not granted to guest "%s" — declare caps.usb, then '
+                           'reboot so the device re-enumerates' % self._guest.id)
+        return UsbHandle(self, grants)
+
     def spawn(self, coro):
         task = asyncio.create_task(self._child(coro))
         self._guest.children.append(task)
@@ -316,6 +333,58 @@ class PwmHandle:
         if not 0 <= d <= 1023:
             raise ValueError('duty is 0..1023')
         self._pwm.duty(d)
+
+
+class UsbHandle:
+    """hal.usb — a guest driving the USB interface it was granted.
+
+    A guest gets keystrokes and clicks, not descriptors. The supervisor built the
+    composite device at boot and owns it; this handle reaches exactly the one
+    interface granted to this guest. `.keyboard`/`.mouse` are None unless that kind
+    was granted, so a guest that asked for a keyboard cannot find a mouse to poke.
+    """
+
+    def __init__(self, hal, grants):
+        self._hal = hal
+        self.keyboard = None
+        self.mouse = None
+        for g in grants:
+            if g.kind == 'hid' and g.spec == 'keyboard':
+                self.keyboard = KeyboardGrant(g.itf)
+            elif g.kind == 'hid' and g.spec == 'mouse':
+                self.mouse = g.itf
+
+    @property
+    def ready(self):
+        """True once the host has actually configured the interface. A guest can
+        poll this instead of typing into a void when nothing is plugged in."""
+        k = self.keyboard or self.mouse
+        try:
+            return bool(k and k.is_open())
+        except AttributeError:
+            return False
+
+
+class KeyboardGrant:
+    """The keyboard, as a guest holds it. Type a string, or press/release raw
+    keycodes (hal.usb via jorm.usb.KeyCode). The supervisor's own release() can
+    still lift every key when the guest is stopped, because it holds the same itf."""
+
+    def __init__(self, itf):
+        self._itf = itf
+
+    def is_open(self):
+        return self._itf.is_open()
+
+    def press(self, *keycodes):
+        self._itf.send_keys(keycodes)
+
+    def release(self):
+        self._itf.send_keys(())
+
+    def tap(self, *keycodes):
+        self._itf.send_keys(keycodes)
+        self._itf.send_keys(())
 
 
 class RgbHandle:

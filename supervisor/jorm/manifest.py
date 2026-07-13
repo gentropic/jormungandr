@@ -7,7 +7,7 @@ _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'ble', 'bus', 'ui',
               'storage', 'mem_kb', 'usb', 'rgb')
 SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'bus', 'ui',
-                  'storage', 'mem_kb', 'rgb')  # M4 brings usb; ble is post-zero
+                  'storage', 'mem_kb', 'rgb', 'usb')  # ble is post-zero
 
 
 class ManifestError(Exception):
@@ -66,6 +66,18 @@ def validate(m):
         if not (isinstance(e, dict) and isinstance(e.get('pin'), int)
                 and isinstance(e.get('count', 1), int) and e.get('count', 1) > 0):
             raise ManifestError('rgb entries must be {"pin": n, "count": k}')
+    usbcap = caps.get('usb')
+    if usbcap is not None:
+        if not isinstance(usbcap, dict):
+            raise ManifestError('caps.usb must be an object, e.g. {"hid": "keyboard"}')
+        for key in usbcap:
+            if key not in ('cdc', 'hid', 'midi'):
+                raise ManifestError('caps.usb keys are cdc | hid | midi (spec §8)')
+        hid = usbcap.get('hid')
+        if hid is not None and hid not in ('keyboard', 'mouse') \
+                and not (isinstance(hid, dict) and 'report_desc' in hid):
+            raise ManifestError('caps.usb.hid must be "keyboard", "mouse", '
+                                'or {"report_desc": "file.bin"}')
     for key in ('pwm', 'adc'):
         if key in caps and not (isinstance(caps[key], list)
                                 and all(isinstance(n, int) for n in caps[key])):
