@@ -22,6 +22,11 @@ The design rests on these, measured on `ESP32_GENERIC_C3` v1.28.0:
   channel 11), so a flagship can run WiFi and be a gateway at once.
 - **Encrypted peers cap at 6** (`ESP_ERR_ESPNOW_FULL`). A gateway securely serves six
   leaves; a seventh needs a second gateway (or app-layer crypto, §6).
+- **The encrypted exchange works end to end, board to board.** The S3 (c510) sent
+  AES-encrypted frames to the C3 with keys set on both sides; the C3 received and
+  *decrypted* them (`received 3: [b'jorm-encrypted-from-S3 #0', ...]`). This is the
+  whole premise, confirmed on real silicon — not just APIs that exist, but two jorm
+  boards exchanging encrypted frames over the air.
 
 ## 1. The gateway
 
@@ -130,7 +135,8 @@ leaf is "WiFi or ESP-NOW" by settings, not by a different program.
 
 ## Status
 
-**Probed, specced, not yet built.** Silicon facts in §0 are measured. The first slice:
+**Probed (incl. a live board-to-board encrypted exchange), specced, not yet built.**
+Silicon facts in §0 are measured. The first slice:
 a `jorm/espnow.py` transport (framing, reassembly, retransmit, encrypted peers,
 broadcast discovery), a gateway task on the flagship, and a smart-leaf uplink that runs
 over it — proven by a real C3 leaf reaching a real S3 over ESP-NOW with the WiFi uplink
