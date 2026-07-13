@@ -199,6 +199,19 @@ pre.tb { font:400 .74rem/1.5 var(--au-font-mono); color:var(--au-error);
 
 .login { max-width:22rem; margin:12vh auto; }
 
+/* declarative panels (spec §7) */
+.pblock { margin-top:0; }
+.pblock .gval { min-height:1.6rem; }
+input[type=range] { accent-color:var(--au-action); width:100%; }
+.gbar { height:4px; background:var(--au-border-soft); border-radius:2px; margin-top:.3rem; }
+.gbar i { display:block; height:100%; width:0; background:var(--au-success); border-radius:2px; }
+.stale-p { filter:grayscale(.6); opacity:.6; }
+.wsel { font:400 .85rem var(--au-font-mono); background:var(--au-surface); color:var(--au-fg);
+  border:1px solid var(--au-border); border-radius:var(--au-radius); padding:.25rem .4rem; }
+.btn.armed { color:var(--au-warn); border-color:var(--au-warn); }
+.wtext { font:400 .74rem/1.5 var(--au-font-mono); white-space:pre-wrap; }
+.wind { font:700 .9rem var(--au-font-mono); }
+
 @media (prefers-reduced-motion: reduce) { .btn { transition:none; } }
 @media (max-width: 760px) {
   .cols { flex-direction:column; }
@@ -247,6 +260,7 @@ const S = {
   tabNode: 'summary', tabGuest: 'overview',
   ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
   conWS: null, logTimer: null, busPaused: false,
+  panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -310,7 +324,8 @@ function connect() {
   ws.onopen = () => {
     S.retry = 0;
     $('#link').className = 'up';
-    ws.send(JSON.stringify({ op: 'sub', filters: S.scope }));
+    ws.send(JSON.stringify({ op: 'sub', filters: currentScope() }));
+    S.scope = currentScope();
     refresh();
   };
   ws.onmessage = ev => {
@@ -328,9 +343,20 @@ function scheduleReconnect() {
   setTimeout(connect, delay);
 }
 function setScope(filters) {
+  // Idempotent by contract: a re-subscribe re-delivers retained messages, and
+  // retained $sys/$ui messages trigger a re-render, which calls setScope. An
+  // unconditional send here is a feedback storm that drowns the socket.
+  const same = filters.length === S.scope.length &&
+    filters.every((f, i) => f === S.scope[i]);
   S.scope = filters;
-  if (S.ws && S.ws.readyState === 1)
-    S.ws.send(JSON.stringify({ op: 'sub', filters }));
+  if (same || !S.ws || S.ws.readyState !== 1) return;
+  S.ws.send(JSON.stringify({ op: 'sub', filters }));
+}
+function currentScope() {
+  const filters = ['$sys/#', '$ui/#'];
+  if (S.sel === null && S.tabNode === 'bus') filters.push('#');
+  for (const t of Object.keys(S.bindWatch)) filters.push(t);
+  return filters;
 }
 
 // staleness: the pulse is data or it is nothing
@@ -355,6 +381,13 @@ function route(topic, msg) {
     renderMastGauges();
     const g = $('#sum-heap'); if (g) g.firstChild.textContent = S.heap[S.heap.length - 1].toFixed(2);
     spark($('#sp-heap'), S.heap); spark($('#sp-heap2'), S.heap);
+  } else if (topic.startsWith('$ui/')) {
+    const parts = topic.split('/');
+    if (parts[2] === 'panel') {
+      if (msg) S.panels[parts[1]] = msg; else delete S.panels[parts[1]];
+      if ((S.sel === null && S.tabNode === 'dashboard') ||
+          (S.sel === parts[1] && S.tabGuest === 'overview')) renderMain();
+    }
   } else if (topic.startsWith('$sys/guest/')) {
     const id = topic.split('/')[2];
     if (msg && S.guests[id]) {
@@ -365,6 +398,11 @@ function route(topic, msg) {
     } else if (msg) {
       refresh();  // a guest we don't know — reconcile
     }
+  }
+  if (S.bindWatch[topic]) {
+    S.bindState[topic] = msg;
+    for (const reg of S.liveWidgets)
+      if (reg.topic === topic) applyWidget(reg, resolve(msg, reg.w.path));
   }
   const bus = $('#busterm');
   if (bus && !S.busPaused) {
@@ -437,7 +475,6 @@ function setTab(tab) {
 function teardown() {
   if (S.conWS) { try { S.conWS.close(); } catch (e) {} S.conWS = null; }
   if (S.logTimer) { clearInterval(S.logTimer); S.logTimer = null; }
-  if (S.scope.length !== 1) setScope(['$sys/#']);
 }
 
 function tabsHTML(tabs, active) {
@@ -447,8 +484,12 @@ function tabsHTML(tabs, active) {
 
 function renderMain() {
   const main = $('#main');
+  S.liveWidgets = [];
+  S.bindWatch = {};
   if (S.sel === null) renderNode(main); else renderGuest(main, S.sel);
   main.querySelectorAll('.tab').forEach(tab => tab.onclick = () => setTab(tab.dataset.tab));
+  main.querySelectorAll('[data-panel]').forEach(el => wirePanel(el.dataset.panel));
+  setScope(currentScope());
 }
 
 function renderNode(main) {
@@ -487,6 +528,11 @@ function renderNode(main) {
         <div class="panel-bd"><table class="cl">
           <tr><th>id</th><th>state</th><th>status</th></tr>${rows}</table></div></div>
     </div>`;
+  } else if (tab === 'dashboard') {
+    const ids = Object.keys(S.panels).sort();
+    body = ids.length
+      ? '<div class="grid">' + ids.map(panelBlock).join('') + '</div>'
+      : '<p class="note">no guest has declared a panel — hal.ui.panel(widgets) puts one here (spec §7)</p>';
   } else if (tab === 'bus') {
     body = `<div class="busbar">
         <span class="badge info">sub #</span>
@@ -505,11 +551,10 @@ function renderNode(main) {
   } else if (tab === 'log') {
     body = `<div class="term" id="logterm"></div>`;
   }
-  main.innerHTML = tabsHTML(['summary', 'bus', 'claims', 'log'], tab) + body;
+  main.innerHTML = tabsHTML(['summary', 'dashboard', 'bus', 'claims', 'log'], tab) + body;
 
   if (tab === 'summary') spark($('#sp-heap2'), S.heap);
   if (tab === 'bus') {
-    setScope(['#', '$sys/#']);
     $('#pausebtn').onclick = () => { S.busPaused = !S.busPaused;
       $('#pausebtn').textContent = S.busPaused ? '▶ resume' : '⏸ pause'; };
     $('#pubbtn').onclick = async () => {
@@ -580,18 +625,210 @@ function renderGuest(main, id) {
       </div>
       <div class="panel"><div class="panel-hd"><span>Claims &amp; bus</span></div>
         <div class="panel-bd" id="gclaims"><span class="note">loading…</span></div></div>
+      ${S.panels[id] ? '<div style="grid-column:1/-1">' + panelBlock(id) + '</div>' : ''}
     </div>`;
+  } else if (tab === 'config') {
+    body = `<div class="panel" style="max-width:36rem">
+      <div class="panel-hd"><span>Configuration</span><span>editable while stopped, too</span></div>
+      <div class="panel-bd" id="cfgbody"><span class="note">loading…</span></div></div>`;
   } else if (tab === 'console') {
     body = `<div class="term" id="conterm"></div>
       <p class="note" style="margin:.4rem 0 0">live over WS · structured {ts, level, text} · ring 200 node-side, ${SCROLLBACK} here</p>`;
   }
-  main.innerHTML = tabsHTML(['overview', 'console'], tab) + body;
+  main.innerHTML = tabsHTML(['overview', 'console', 'config'], tab) + body;
 
   if (tab === 'overview') {
     main.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => act(id, btn.dataset.act, btn));
     loadGuestDetail(id);
   }
   if (tab === 'console') openConsole(id);
+  if (tab === 'config') loadConfig(id);
+}
+
+async function loadConfig(id) {
+  const host = $('#cfgbody');
+  let got;
+  try { got = await api('GET', '/api/guests/' + id + '/config'); }
+  catch (e) { host.innerHTML = '<span class="note">config: ' + esc(e.message) + '</span>'; return; }
+  if (!got.schema) {
+    host.innerHTML = '<span class="note">no config schema declared — hal.ui.config(fields) puts a form here</span>';
+    return;
+  }
+  host.innerHTML = got.schema.map(f => {
+    const val = got.values[f.key];
+    const pending = got.pending_restart.includes(f.key);
+    const chips = (f.live ? ' <span class="badge info">live</span>' : '') +
+      (pending ? ' <span class="badge caution">⚠ pending restart</span>' : '');
+    let ctl = '';
+    if (f.w === 'slider') {
+      ctl = `<div style="display:flex;gap:.6rem;align-items:center">
+        <input type="range" data-key="${esc(f.key)}" data-w="slider" min="${f.min}" max="${f.max}"
+          step="${f.step || 1}" value="${val}"
+          oninput="this.nextElementSibling.textContent = this.value + ' ${esc(f.unit || '')}'">
+        <span class="note" style="min-width:5.5em">${val} ${esc(f.unit || '')}</span></div>`;
+    } else if (f.w === 'toggle') {
+      ctl = `<label class="note"><input type="checkbox" data-key="${esc(f.key)}" data-w="toggle"
+        ${val ? 'checked' : ''}> ${val ? 'on' : 'off'}</label>`;
+    } else if (f.w === 'select') {
+      ctl = `<select class="wsel" data-key="${esc(f.key)}" data-w="select">` +
+        (f.options || []).map(o => `<option${o === val ? ' selected' : ''}>${esc(o)}</option>`).join('') +
+        '</select>';
+    } else {
+      ctl = `<input class="wsel" data-key="${esc(f.key)}" data-w="text" value="${esc(val ?? '')}">`;
+    }
+    return `<div class="field"><label>${esc(f.label || f.key)}${chips}</label>${ctl}</div>`;
+  }).join('') +
+  (got.undeclared.length
+    ? `<p class="note">⚠ in the store but no longer declared: ${got.undeclared.map(esc).join(', ')}</p>` : '') +
+  '<p style="margin:.4rem 0 0"><button class="btn primary" id="cfgsave">save</button></p>';
+  $('#cfgsave').onclick = async () => {
+    const updates = {};
+    host.querySelectorAll('[data-key]').forEach(el => {
+      const w = el.dataset.w;
+      updates[el.dataset.key] = w === 'slider' ? Number(el.value)
+        : w === 'toggle' ? el.checked : el.value;
+    });
+    try {
+      const res = await api('PUT', '/api/guests/' + id + '/config', updates);
+      toast('config saved' +
+        (res.applied_live.length ? ' · live: ' + res.applied_live.join(', ') : '') +
+        (res.pending_restart.length ? ' · pending restart: ' + res.pending_restart.join(', ') : ''),
+        res.pending_restart.length ? 'fault' : 'info');
+      loadConfig(id);
+    } catch (e) { toast('config: ' + e.message, 'fault'); }
+  };
+}
+
+// ── declarative panels (spec §7): the supervisor's file renders, guests declare
+function resolve(msg, path) {
+  if (path == null) return msg;
+  let v = msg;
+  for (const seg of String(path).split('.')) v = v == null ? v : v[seg];
+  return v;
+}
+
+function panelBlock(gid) {
+  const decl = S.panels[gid];
+  if (!decl || !decl.widgets) return '';
+  const g = S.guests[gid];
+  const stale = !g || g.state !== 'running';
+  const cells = decl.widgets.map((w, i) => {
+    const wid = `w-${gid}-${i}`;
+    const span = w.size === 'l' ? ' style="grid-column:1/-1"' : '';
+    const label = esc(w.label || w.id);
+    let inner = '';
+    if (w.w === 'value' || w.w === 'gauge') {
+      inner = `<div class="gval"><span id="${wid}">—</span>` +
+        (w.unit ? `<span class="unit">${esc(w.unit)}</span>` : '') + '</div>' +
+        (w.w === 'gauge' ? `<div class="gbar"><i id="${wid}-bar"></i></div>` : '') +
+        (w.spark ? `<svg class="spark" id="${wid}-sp" width="90" height="20" viewBox="0 0 90 20"></svg>` : '');
+    } else if (w.w === 'indicator') {
+      inner = `<div class="wind" id="${wid}"><span class="st off">○</span> —</div>`;
+    } else if (w.w === 'text') {
+      inner = `<div class="wtext" id="${wid}">—</div>`;
+    } else if (w.w === 'button') {
+      inner = `<button class="btn secondary" id="${wid}">${label}</button>`;
+    } else if (w.w === 'toggle') {
+      inner = `<button class="btn secondary" id="${wid}" data-on="0">—</button>`;
+    } else if (w.w === 'slider') {
+      inner = `<input type="range" id="${wid}" min="${w.min}" max="${w.max}" step="${w.step || 1}">` +
+        `<span class="note" id="${wid}-lbl">—</span>`;
+    } else if (w.w === 'select') {
+      inner = `<select class="wsel" id="${wid}">` +
+        (w.options || []).map(o => `<option>${esc(o)}</option>`).join('') + '</select>';
+    }
+    return `<div class="gauge"${span}><div class="glbl">${label}</div>${inner}</div>`;
+  }).join('');
+  return `<div class="readout pblock${stale ? ' stale-p' : ''}" data-panel="${esc(gid)}">
+    <div class="readout-top"><span>Panel · ${esc(gid)}</span>
+      <span>${stale ? 'frozen — guest ' + esc(g ? g.state : 'removed') : '◉ live'}</span></div>
+    <div class="readout-bd">${cells}</div></div>`;
+}
+
+function wirePanel(gid) {
+  const decl = S.panels[gid];
+  if (!decl || !decl.widgets) return;
+  decl.widgets.forEach((w, i) => {
+    const el = document.getElementById(`w-${gid}-${i}`);
+    if (!el) return;
+    const reg = { topic: w.bind, w, el, hist: [] };
+    if (w.bind) {
+      S.liveWidgets.push(reg);
+      S.bindWatch[w.bind] = 1;
+      if (S.bindState[w.bind] !== undefined)
+        applyWidget(reg, resolve(S.bindState[w.bind], w.path));
+    }
+    if (w.set) {
+      const pub = value => api('POST', '/api/bus/publish',
+        { topic: w.set, msg: (value && typeof value === 'object')
+            ? Object.assign({ origin: 'ui' }, value)
+            : { value, origin: 'ui' } })
+        .catch(e => toast(w.set + ': ' + e.message, 'fault'));
+      if (w.w === 'button') el.onclick = () => {
+        if (w.confirm && el.dataset.armed !== '1') {
+          el.dataset.armed = '1';
+          el.classList.add('armed');
+          el.textContent = 'confirm?';
+          setTimeout(() => { el.dataset.armed = '0'; el.classList.remove('armed');
+            el.textContent = w.label || w.id; }, 3000);
+          return;
+        }
+        el.dataset.armed = '0'; el.classList.remove('armed');
+        el.textContent = w.label || w.id;
+        pub(w.msg === undefined ? { pressed: true } : w.msg);
+      };
+      if (w.w === 'toggle') el.onclick = () => {
+        const next = el.dataset.on !== '1';
+        applyWidget(reg, next);  // optimistic; the bind state confirms or reverts
+        pub(next);
+        setTimeout(() => { const s = resolve(S.bindState[w.bind], w.path);
+          if (s !== undefined) applyWidget(reg, s); }, 5000);
+      };
+      if (w.w === 'slider') el.onchange = () => pub(Number(el.value));
+      if (w.w === 'select') el.onchange = () => pub(el.value);
+    }
+  });
+}
+
+function applyWidget(reg, val) {
+  const { w, el } = reg;
+  if (val === undefined || el == null) return;
+  if (w.w === 'value' || w.w === 'gauge') {
+    el.textContent = typeof val === 'number' && w.fmt ? w.fmt.replace('%v', val) : String(val);
+    if (w.w === 'gauge') {
+      const bar = document.getElementById(el.id + '-bar');
+      if (bar && typeof val === 'number') {
+        const lo = w.min ?? 0, hi = w.max ?? 100;
+        bar.style.width = Math.max(0, Math.min(100, (val - lo) / (hi - lo) * 100)) + '%';
+      }
+    }
+    const sp = document.getElementById(el.id + '-sp');
+    if (sp && typeof val === 'number') {
+      reg.hist.push(val);
+      if (reg.hist.length > 40) reg.hist.shift();
+      spark(sp, reg.hist);
+    }
+  } else if (w.w === 'indicator') {
+    const on = !!val;
+    el.innerHTML = on ? '<span class="st go">●</span> ' + esc(w.on || 'on')
+                      : '<span class="st off">○</span> ' + esc(w.off || 'off');
+  } else if (w.w === 'text') {
+    if (w.lines) {
+      reg.hist.push(String(val));
+      if (reg.hist.length > w.lines) reg.hist.shift();
+      el.textContent = reg.hist.join('\n');
+    } else el.textContent = String(val);
+  } else if (w.w === 'toggle') {
+    el.dataset.on = val ? '1' : '0';
+    el.textContent = val ? '● on' : '○ off';
+    el.style.color = val ? 'var(--au-success)' : '';
+  } else if (w.w === 'slider') {
+    if (document.activeElement !== el) el.value = val;
+    const lbl = document.getElementById(el.id + '-lbl');
+    if (lbl) lbl.textContent = val + ' ' + (w.unit || '');
+  } else if (w.w === 'select') {
+    el.value = String(val);
+  }
 }
 
 async function loadGuestDetail(id) {

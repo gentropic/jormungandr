@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export JORM_URL="http://localhost:8000"
+export JORM_URL="${JORM_URL:-http://localhost:8000}"
 export JORM_TOKEN="dev-token"
 JORM="python3 $ROOT/cli/jorm.py"
 SIMLOG="$(mktemp)"

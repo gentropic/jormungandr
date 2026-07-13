@@ -12,9 +12,17 @@ async def run(hal):
         {'key': 'unit_f', 'w': 'toggle', 'label': 'Fahrenheit',
          'default': False, 'live': False},
     ])
+
+    # The panel is declared once, at startup, against the config as it stands —
+    # which is exactly why `unit_f` is live: false. A gauge whose label and
+    # payload can disagree is a gauge that lies; changing the unit costs a
+    # restart, and the UI says so in amber.
+    fahrenheit = hal.config.get('unit_f')
+    unit, lo, hi = ('°F', 32, 104) if fahrenheit else ('°C', 0, 40)
+
     await hal.ui.panel([
         {'w': 'gauge', 'id': 't', 'label': 'Temp', 'bind': 'thermo/temp',
-         'path': 'c', 'min': 0, 'max': 40, 'unit': '°C'},
+         'path': 'deg', 'min': lo, 'max': hi, 'unit': unit},
         {'w': 'value', 'id': 'raw', 'label': 'ADC', 'bind': 'thermo/temp',
          'path': 'raw', 'spark': True},
         {'w': 'slider', 'id': 'period', 'label': 'Period',
@@ -46,10 +54,8 @@ async def run(hal):
     while True:
         raw = adc.read_u16()
         c = 15.0 + (raw - 28000) / 800.0
-        if hal.config.get('unit_f'):
-            hal.bus.publish('thermo/temp', {'c': round(c * 9 / 5 + 32, 1), 'raw': raw}, retain=True)
-            hal.status('%.1f °F' % (c * 9 / 5 + 32))
-        else:
-            hal.bus.publish('thermo/temp', {'c': round(c, 1), 'raw': raw}, retain=True)
-            hal.status('%.1f °C' % c)
+        deg = round(c * 9 / 5 + 32, 1) if fahrenheit else round(c, 1)
+        # the unit travels with the reading — a consumer never has to guess
+        hal.bus.publish('thermo/temp', {'deg': deg, 'unit': unit, 'raw': raw}, retain=True)
+        hal.status('%.1f %s' % (deg, unit))
         await hal.sleep_ms(st['period'])

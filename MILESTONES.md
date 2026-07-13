@@ -53,11 +53,23 @@ dashboard compositing, pending-restart amber. hal fills out: `pwm`, `adc`, `i2c`
 **Acceptance**: a sensor guest with a gauge + slider panel, configured from the UI while
 stopped, panel grays on crash and freezes last values.
 
+**Status: done** — `tools/accept-m3.sh` (server) + `tools/verify-ui.mjs` (24 browser
+checks), both all-pass against the sim. The sensor guest is `examples/thermo`.
+
 ## M4 — USB (needs an S3)
 
 Composite planner, inert-when-stopped interfaces, replan-with-amber, `hal.usb.cdc/hid/midi`,
 `"cdc": "console"`. **Acceptance**: the RelayKVM party trick — `ble: central` +
 `hid: keyboard` in ~40 guest lines.
+
+## M5 — silicon (the drill that software cannot run)
+
+Flash `jorm-c510` (ESP32-S3 N16R8, `SPIRAM_OCT` build — the octal PSRAM is invisible to
+the stock build), write real `settings.json`, run every acceptance suite against the
+board, then the ungovernable-guest drill: `while True: pass` starves the node → hardware
+WDT resets it → it comes back reachable with the culprit named from RTC memory, its
+autostart disabled, and a sleeping bystander guest *not* blamed.
+**Acceptance**: all four suites green against the board; the drill names the right guest.
 
 ## Later (v1-shaped, out of zero)
 
