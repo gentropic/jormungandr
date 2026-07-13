@@ -19,7 +19,17 @@ if [ -n "${NODE:-}" ]; then
         python3 "$ROOT/cli/jorm.py" stop "$g" >/dev/null 2>&1 || true
         python3 "$ROOT/cli/jorm.py" rm "$g" >/dev/null 2>&1 || true
     done
-    trap 'rm -rf "$TMP"' EXIT
+    # Clean up on the board too, not just $TMP. These guests hold USB endpoints —
+    # a suite that leaves six keyboards installed makes the NEXT usb install fail
+    # with "0 of 6 free", which is how the jiggler drill hit a 409. A test that
+    # sabotages the next test is worse than no test.
+    board_wipe() {
+        for g in $(python3 "$ROOT/cli/jorm.py" guests 2>/dev/null | awk 'NR>1 {print $1}'); do
+            python3 "$ROOT/cli/jorm.py" stop "$g" >/dev/null 2>&1 || true
+            python3 "$ROOT/cli/jorm.py" rm "$g" >/dev/null 2>&1 || true
+        done
+    }
+    trap 'board_wipe; rm -rf "$TMP"' EXIT
 else
     rm -rf "$ROOT/sim/fs/guests"
     "$ROOT/sim/run.sh" >"$SIMLOG" 2>&1 &

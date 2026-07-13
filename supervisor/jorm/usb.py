@@ -49,14 +49,25 @@ class Grant:
 
     @property
     def injector(self):
-        """A HID grant can type into whatever it is plugged into. Say so, out loud,
-        wherever this guest is shown (§8). A keystroke injector that is discreet
-        about being a keystroke injector is the bad kind."""
+        """A HID grant drives the host's own input. Say so, out loud, wherever this
+        guest is shown (§8). An input injector that is discreet about being one is
+        the bad kind."""
         return self.kind == 'hid'
+
+    @property
+    def injects(self):
+        """What it can inject — a keyboard types, a mouse moves and clicks. "Keystroke
+        injector" on a mouse is both wrong and the kind of wrong that erodes trust in
+        the warning that matters."""
+        if self.kind != 'hid':
+            return None
+        return {'keyboard': 'keystrokes', 'mouse': 'pointer moves and clicks'}.get(
+            self.spec, 'host input')
 
     def info(self):
         return {'guest': self.guest, 'kind': self.kind, 'spec': self.spec,
-                'endpoints': self.eps, 'injector': self.injector}
+                'endpoints': self.eps, 'injector': self.injector,
+                'injects': self.injects}
 
 
 def _build(guest_id, cap):
@@ -174,8 +185,8 @@ def apply(p, log):
                       ', '.join('%s:%s' % (g.guest, g.spec) for g in p.grants)))
         for g in p.grants:
             if g.injector:
-                log.append('sys', 'usb: %s can type into the host it is plugged into '
-                                  '(hid %s)' % (g.guest, g.spec))
+                log.append('sys', 'usb: %s can inject %s into the host it is plugged '
+                                  'into (hid %s)' % (g.guest, g.injects, g.spec))
     except Exception as e:
         # Enumeration must never brick the node — a node with a broken USB
         # descriptor has to come up REACHABLE (over WiFi) so a person can fix it,

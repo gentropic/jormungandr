@@ -1,0 +1,15 @@
+{
+  "spec": 0,
+  "id": "jiggler",
+  "name": "Mouse Jiggler",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": false,
+  "restart": "on-crash",
+  "caps": {
+    "usb": { "hid": "mouse" },
+    "bus": { "pub": ["jiggler/#"], "sub": ["cmd/jiggler/#", "$sys/clock/tick"] },
+    "ui": true
+  }
+}

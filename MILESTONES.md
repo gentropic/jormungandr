@@ -62,6 +62,20 @@ Composite planner, inert-when-stopped interfaces, replan-with-amber, `hal.usb.cd
 `"cdc": "console"`. **Acceptance**: the RelayKVM party trick — `ble: central` +
 `hid: keyboard` in ~40 guest lines.
 
+**Status: DONE (hid).** `machine.USBDevice` is in the stock S3 firmware, so this was
+a weekend, not a firmware fork. The composite descriptor is built once at boot from
+installed guests; the endpoint budget (6) is enforced at *install* with a per-interface
+breakdown; a stopped guest's interface goes inert (keys lifted, no jam). Verified on
+`jorm-c510`, 2026-07-13: the board enumerated to Windows as a **HID Keyboard Device**,
+then — after removing the guest and rebooting — the native serial console came back;
+`examples/jiggler` (a mouse) enumerated as a **HID-compliant mouse** and moved the host
+pointer 2 px on a live-configurable interval, toggleable, returning to origin each nudge.
+`tools/accept-usb.sh` (4 checks) green on both sim and board.
+
+Not yet built: `cdc` (incl. `"cdc": "console"`), `midi`, raw HID report descriptors, and
+the `ble: central` half of the RelayKVM trick (ble is post-zero). `hid` keyboard+mouse is
+the M4 core; the rest is follow-on.
+
 ## M5 — silicon (the drill that software cannot run)
 
 Flash `jorm-c510` (ESP32-S3 N16R8, `SPIRAM_OCT` build — the octal PSRAM is invisible to
@@ -92,8 +106,9 @@ ungovernable-guest WDT drill is the one item left in zero.**
 
 ## Where zero stands
 
-M1 ✓ · M2 ✓ · M3 ✓ · M5 ✓ (silicon, incl. the drill). **M4 (USB) is the last
-milestone in zero**, and it is the only one that has not been started.
+M1 ✓ · M2 ✓ · M3 ✓ · M4 ✓ (hid, on silicon) · M5 ✓ (silicon, incl. the drill).
+**Every milestone in zero is done.** M4's `cdc`/`midi`/raw-HID and the `ble` half of
+the RelayKVM trick are the named follow-ons.
 
 Beyond the milestones, zero also grew what the founding spec promised but did not
 schedule: the `/lib` store and three-tier imports, supervisor OTA with

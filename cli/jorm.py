@@ -606,7 +606,7 @@ def cmd_usb(args):
     if not ifs:
         print('no usb interfaces — no installed guest declares caps.usb')
     for i in ifs:
-        flag = '  ⚠ keystroke injector' if i.get('injector') else ''
+        flag = ('  ⚠ injects %s' % i.get('injects', 'host input')) if i.get('injector') else ''
         print('%-12s %s %-9s %d ep%s' % (i['guest'], i['kind'], i['spec'], i['endpoints'], flag))
     print('endpoints: %d / %d used' % (p['endpoints_used'], p['endpoints_total']))
     if p.get('error'):
