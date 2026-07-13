@@ -150,12 +150,20 @@ if held():
 else:
     node = Node(load_settings())
     wifi_up(node)
-    # Radio has its buffers; now it is safe to load the rest.
-    from jorm.api import create_app
-    from jorm.supervisor import Supervisor
-    sup = Supervisor(node)
-    sup.blame_check()
-    sup.scan()
-    sup.enumerate_usb()      # build the USB device from installed guests, before any run (§8)
-    sup.install_import_guard()
-    asyncio.run(amain(node, sup, create_app(node, sup)))
+    # A leaf is a node too small to be a full node (SPEC-two): it runs no IP server,
+    # so it never loads the heavy supervisor that would starve its lwIP pool. Branch
+    # BEFORE importing any of it — the import is the cost, not just the running.
+    if node.settings.get('role') == 'leaf':
+        from jorm.leaf import run_leaf
+        node.log.append('sys', 'booting as a leaf (no server, no ui)')
+        run_leaf(node)   # blocks forever (asyncio.run); never returns to fall through
+    else:
+        # Radio has its buffers; now it is safe to load the rest.
+        from jorm.api import create_app
+        from jorm.supervisor import Supervisor
+        sup = Supervisor(node)
+        sup.blame_check()
+        sup.scan()
+        sup.enumerate_usb()  # build the USB device from installed guests, before any run (§8)
+        sup.install_import_guard()
+        asyncio.run(amain(node, sup, create_app(node, sup)))
