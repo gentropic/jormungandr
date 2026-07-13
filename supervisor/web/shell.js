@@ -1,51 +1,222 @@
-// The node shell, on a real terminal.
+// The node shell: geas on @gcu/term, with the node's flash as its filesystem.
 //
-// Lazily loaded: the Shell tab fetches this (and term.js) on first open, so a
-// phone that only wants the dashboard never pays for a terminal it did not ask
-// for. The main UI stays ~21 KB gzipped; this costs what it costs, once, cached.
+// Lazily loaded — the Shell tab fetches this on first open, so a phone showing
+// the dashboard never pays for a shell it will not use. The main UI stays ~21 KB
+// gzipped; this is ~240 KB more, once, cached.
 //
-// It is deliberately not a Unix. The verbs are jorm's, the "filesystem" is the
-// node's API, and there is no process table because there is no process table —
-// there are guests, and the supervisor owns them. The full POSIX shell (geas) is
-// the next surface, and it binds to the same API through a VFS of three methods.
+// Nothing here runs on the MCU. geas is JavaScript and runs in the browser; the
+// node's side of it is nine HTTP methods (/api/fs) and the API it already had.
+// That is the whole argument against a Unix on the chip, made concrete: the shell
+// is a client, and the node stays a node.
 import { Terminal, DomRenderer, Input } from './term.js';
+import { createShell, createTermAdapter, makeLineEditor } from './geas.js';
 
-const C = {
-  reset: '\x1b[0m',
-  dim: '\x1b[90m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  orange: '\x1b[93m',
-  bold: '\x1b[1m',
+const A = {
+  reset: '\x1b[0m', dim: '\x1b[90m', red: '\x1b[31m', green: '\x1b[32m',
+  yellow: '\x1b[33m', blue: '\x1b[34m', orange: '\x1b[93m', bold: '\x1b[1m',
 };
 
-const HELP = [
-  ['guests', 'list installed guests'],
-  ['start|stop|restart <id>', 'lifecycle'],
-  ['rm <id>', 'remove a stopped guest'],
-  ['cat <id> [file]', "read a guest's source"],
-  ['claims', 'who owns which pin'],
-  ['log [n]', "the supervisor's own log"],
-  ['retained', 'the retained bus table'],
-  ['pub <topic> [json]', 'inject a message'],
-  ['sub <filter>', 'watch the bus (any key stops)'],
-  ['lib', 'the shared library store'],
-  ['node', 'board, heap, uptime, clock'],
-  ['temp', 'the MCU temperature, in Celsius'],
-  ['reboot', 'reboot the node'],
-  ['clear', 'clear the screen'],
-];
-const VERBS = HELP.map(h => h[0].split(/[ |]/)[0])
-  .concat(['stop', 'restart', 'help']);
+// ── the VFS: geas's nine methods, over the node's flash ────────────────────
+function nodeVfs(api) {
+  const p = path => String(path || '/').replace(/^\/+/, '');
+  // The root is the empty path, and '/api/fs/' with a trailing slash is a 404 —
+  // so the root has to lose the slash the rest of the paths need to keep.
+  const url = path => (p(path) ? '/api/fs/' + p(path) : '/api/fs');
+  const dec = new TextDecoder();
 
+  const get = async path => api('GET', url(path), undefined, 'raw');
+
+  return {
+    async readFile(path, opts) {
+      const body = await get(path);
+      if (typeof body !== 'string') throw new Error(`${path}: is a directory`);
+      return (opts && opts.encoding === null) ? new TextEncoder().encode(body) : body;
+    },
+    async writeFile(path, data) {
+      const body = typeof data === 'string' ? data : dec.decode(data);
+      await api('PUT', url(path), body, 'raw');
+    },
+    async readdir(path) {
+      const r = await api('GET', url(path));
+      if (!r.dir) throw new Error(`${path}: not a directory`);
+      return r.entries.map(e => e.name);
+    },
+    async stat(path) {
+      // The root has no name, so it cannot be a path segment — and `ls /` stats
+      // before it reads. Answer for it here rather than inventing an endpoint
+      // whose only job is to say "yes, the flash is a directory".
+      const r = p(path)
+        ? await api('POST', `/api/fs/${p(path)}?op=stat`)
+        : { dir: true, size: 0 };
+      return {
+        isFile: () => !r.dir, isDirectory: () => r.dir,
+        size: r.size, mode: r.dir ? 0o40755 : 0o100644,
+      };
+    },
+    async mkdir(path) { await api('POST', `/api/fs/${p(path)}?op=mkdir`); },
+    async rmdir(path) { await api('DELETE', url(path)); },
+    async unlink(path) { await api('DELETE', url(path)); },
+    async rename(from, to) {
+      await api('POST', `/api/fs/${p(from)}?op=rename`, { to: p(to) });
+    },
+    async glob(pattern) {
+      // one directory deep is enough for a flash with four directories in it
+      const star = pattern.lastIndexOf('/');
+      const dir = star > 0 ? pattern.slice(0, star) : '';
+      const pat = star > 0 ? pattern.slice(star + 1) : pattern;
+      const rx = new RegExp('^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+      let names;
+      try { names = await this.readdir(dir || '/'); } catch (e) { return []; }
+      return names.filter(n => rx.test(n)).map(n => (dir ? dir + '/' + n : n));
+    },
+  };
+}
+
+// ── the jorm builtins: the verbs, as commands geas can pipe ────────────────
+function jormBuiltins(api, ctx) {
+  const out = (c, s) => c.stdout(s + '\n');
+  const need = (argv, what) => {
+    if (!argv[1]) throw new Error(`which ${what}?`);
+    return argv[1];
+  };
+
+  return {
+    async guests(argv, c) {
+      const gs = await api('GET', '/api/guests');
+      if (!gs.length) return out(c, A.dim + 'no guests installed' + A.reset), 0;
+      for (const g of gs) {
+        const col = g.state === 'running' ? A.green : g.state === 'crashed' ? A.red
+          : g.state === 'unresponsive' ? A.yellow : A.dim;
+        out(c, `${A.dim}${String(g.num).padEnd(5)}${A.reset}${g.id.padEnd(12)} ` +
+          `${col}${g.state.padEnd(13)}${A.reset}${A.dim}${g.status || ''}` +
+          `${g.suspected ? '  ⚠ suspected' : ''}${A.reset}`);
+      }
+      return 0;
+    },
+    async start(argv, c) {
+      const r = await api('POST', `/api/guests/${need(argv, 'guest')}/start`);
+      out(c, `${argv[1]}: ${A.green}${r.state}${A.reset}`);
+      ctx.refresh();
+      return 0;
+    },
+    async stop(argv, c) {
+      const r = await api('POST', `/api/guests/${need(argv, 'guest')}/stop`);
+      out(c, `${argv[1]}: ${r.state}`);
+      ctx.refresh();
+      return 0;
+    },
+    async restart(argv, c) {
+      const r = await api('POST', `/api/guests/${need(argv, 'guest')}/restart`);
+      out(c, `${argv[1]}: ${A.green}${r.state}${A.reset}`);
+      ctx.refresh();
+      return 0;
+    },
+    async claims(argv, c) {
+      const t = await api('GET', '/api/claims');
+      if (t.reserved_pins.length)
+        out(c, A.dim + 'reserved: pin ' + t.reserved_pins.join(', ') + A.reset);
+      for (const p of t.pins)
+        out(c, `pin ${String(p.pin).padEnd(4)} ${A.blue}${p.mode.padEnd(11)}${A.reset}${p.owners.join(' · ')}`);
+      for (const e of t.i2c)
+        out(c, `i2c ${e.bus}/0x${e.addr.toString(16)}  ${e.owner}`);
+      if (!t.pins.length && !t.i2c.length) out(c, A.dim + 'nothing passed through' + A.reset);
+      return 0;
+    },
+    async jlog(argv, c) {
+      const got = await api('GET', '/api/node/log?n=' + (argv[1] || 30));
+      for (const l of got.lines) {
+        const col = l.level === 'error' ? A.red : l.level === 'sys' ? A.blue : '';
+        const t = l.ts ? new Date(l.ts * 1000).toTimeString().slice(0, 8)
+          : '+' + (l.up || 0).toFixed(0) + 's';
+        out(c, `${A.dim}${t}${A.reset} ${col}${l.level.padEnd(5)}${A.reset} ${l.text}`);
+      }
+      return 0;
+    },
+    async pub(argv, c) {
+      if (!argv[1]) throw new Error('pub <topic> [json]');
+      let msg = argv.slice(2).join(' ');
+      try { msg = JSON.parse(msg); } catch (e) { if (!msg) msg = null; }
+      const r = await api('POST', '/api/bus/publish', {
+        topic: argv[1],
+        msg: (msg && typeof msg === 'object') ? { ...msg, origin: 'ui' } : msg,
+      });
+      out(c, `published ${A.blue}${argv[1]}${A.reset} → ${r.delivered} subscriber(s)`);
+      return 0;
+    },
+    async sub(argv, c) {
+      const filter = argv[1] || '#';
+      out(c, A.dim + `watching ${filter} — any key stops` + A.reset);
+      await new Promise(resolve => {
+        const off = ctx.watch(filter, (topic, msg) => {
+          const ui = msg && typeof msg === 'object' && msg.origin === 'ui';
+          out(c, `${ui ? A.orange + '▸ ' : A.blue}${topic.padEnd(26)}${A.reset}` +
+            JSON.stringify(msg));
+        });
+        ctx.interrupt = () => { off(); ctx.interrupt = null; resolve(); };
+      });
+      return 0;
+    },
+    async retained(argv, c) {
+      const t = await api('GET', '/api/bus/retained');
+      for (const topic of Object.keys(t).sort())
+        out(c, `${A.blue}${topic.padEnd(28)}${A.reset}${JSON.stringify(t[topic])}`);
+      return 0;
+    },
+    async jlib(argv, c) {
+      const rows = await api('GET', '/api/lib');
+      if (!rows.length) return out(c, A.dim + 'the library store is empty' + A.reset), 0;
+      for (const r of rows)
+        out(c, `${r.name.padEnd(16)}${A.dim}${String(r.bytes).padStart(6)} B  ` +
+          `imported by: ${r.imported_by.join(', ') || '—'}${A.reset}`);
+      return 0;
+    },
+    async node(argv, c) {
+      const n = await api('GET', '/api/node');
+      out(c, `${A.bold}${n.hostname}${A.reset} ${A.dim}· ${n.board}${A.reset}`);
+      out(c, `  heap free ${A.green}${(n.heap_free / 1048576).toFixed(2)} MB${A.reset}` +
+        `  ·  up ${(n.uptime_ms / 1000).toFixed(0)} s  ·  ${n.cluster}`);
+      out(c, `  clock: ${n.clock.synced ? A.green + n.clock.source
+        : A.yellow + 'UNSYNCED — timestamps are uptime'}${A.reset}`);
+      return 0;
+    },
+    async temp(argv, c) {
+      out(c, ctx.state.temp == null ? A.dim + 'no reading yet' + A.reset
+        : `${A.green}${ctx.state.temp} °C${A.reset}`);
+      return 0;
+    },
+    async reboot(argv, c) {
+      await api('POST', '/api/node/reboot');
+      out(c, A.yellow + 'rebooting…' + A.reset);
+      return 0;
+    },
+    async jhelp(argv, c) {
+      out(c, `${A.bold}geas${A.reset} — POSIX syntax, pipes, globs, ${A.dim}for/if/while${A.reset}.`);
+      out(c, `${A.dim}The node's flash is the filesystem: ls /guests, cat /lib/*.py${A.reset}`);
+      out(c, '');
+      out(c, `${A.bold}jorm verbs${A.reset}`);
+      for (const [v, d] of [
+        ['guests', 'list installed guests'],
+        ['start|stop|restart <id>', 'lifecycle'],
+        ['claims', 'who owns which pin'],
+        ['pub <topic> [json]', 'inject a message'],
+        ['sub <filter>', 'watch the bus (any key stops)'],
+        ['retained', 'the retained bus table'],
+        ['jlog [n]', "the supervisor's own log"],
+        ['jlib', 'the shared library store'],
+        ['node · temp · reboot', 'the node itself'],
+      ]) out(c, `  ${A.orange}${v.padEnd(26)}${A.reset}${A.dim}${d}${A.reset}`);
+      out(c, '');
+      out(c, `${A.dim}and the coreutils geas brings: ls cat grep sed cut sort wc find …${A.reset}`);
+      return 0;
+    },
+  };
+}
+
+// ── mount ─────────────────────────────────────────────────────────────────
 export function mountShell(host, ctx) {
   // term.css contracts for a .termhost wrapper around .screen + the focus
-  // textarea, and it says plainly not to override the structural declarations.
-  // I did (overflow, padding, a border straight on .screen) and the renderer
-  // measured a zero-height cell, so the whole terminal collapsed to one line.
-  // Style the box around it; leave the contract alone.
+  // textarea, and says plainly not to override its structural declarations.
   const wrap = document.createElement('div');
   wrap.className = 'termhost';
   const screen = document.createElement('div');
@@ -57,16 +228,12 @@ export function mountShell(host, ctx) {
   wrap.append(screen, hidden);
   host.replaceChildren(wrap);
 
-  const cols = Math.max(40, Math.min(120, Math.floor(host.clientWidth / 8.4) || 80));
-  const term = new Terminal(cols, 24);
-  // cssVarTheme: the renderer re-reads --gcu-term-* every frame, and the UI maps
-  // those onto Switchboard's --au-*. So the terminal is basalt in the dark and
-  // equipment gray in the light, without knowing either word.
+  const cols = Math.max(40, Math.min(140, Math.floor(host.clientWidth / 7.9) || 80));
+  const term = new Terminal(cols, 26);
   const renderer = new DomRenderer(term, screen, { cssVarTheme: true });
   const input = new Input(term, screen, hidden, renderer);
 
-  let raf = 0;
-  let blink = performance.now();
+  let raf = 0, blink = performance.now();
   const tick = now => {
     if (now - blink > 530) { renderer.cursorOn = !renderer.cursorOn; blink = now; }
     renderer.render();
@@ -74,216 +241,61 @@ export function mountShell(host, ctx) {
   };
   raf = requestAnimationFrame(tick);
 
-  const w = s => term.write(s);
-  const say = (s = '') => w(s + '\r\n');
-  const err = s => say(`${C.red}✗ ${s}${C.reset}`);
+  // geas's own adapter for this exact terminal, and its own line editor —
+  // history, backspace, echo. The one I hand-wrote was doing geas's job.
+  const adapter = createTermAdapter({ terminal: term });
+  const readLine = makeLineEditor(adapter);
 
-  const host_ = () => (ctx.state.node && ctx.state.node.hostname) || 'jorm';
-  const prompt = () => w(`${C.orange}${host_()}${C.reset} ${C.dim}▸${C.reset} `);
+  // A terminal is not a file. geas's builtins end lines with LF, as any Unix
+  // program should; a VT needs CRLF, or every line starts where the last one
+  // ended and the output walks diagonally off the screen. The translation
+  // belongs here, at the boundary between a program's stdout and a piece of
+  // glass — not in geas, which is right, and not in term, which is also right.
+  const CR = String.fromCharCode(13), LF = String.fromCharCode(10);
+  const write = s => adapter.write(
+    String(s).split(CR + LF).join(LF).split(LF).join(CR + LF));
 
-  // ── the line editor. Input hands us keystrokes the way a pty does; echoing
-  //    them, and knowing what backspace means, is the shell's job — not the
-  //    terminal's. This is the part a <input type=text> was quietly doing for us.
-  let line = '';
-  let cur = 0;
-  const hist = ctx.state.shhist || (ctx.state.shhist = []);
-  let hpos = hist.length;
-  let busy = false;
-  let interrupt = null;
-
-  const redraw = () => {
-    w('\r\x1b[2K');
-    prompt();
-    w(line);
-    if (cur < line.length) w(`\x1b[${line.length - cur}D`);
-  };
-
-  const banner = () => {
-    say(`${C.bold}${host_()}${C.reset} ${C.dim}— the jorm verbs. 'help' lists them.${C.reset}`);
-    say(`${C.dim}not a Unix, on purpose: the node's shell is its API${C.reset}`);
-    say();
-  };
-
-  term.onText(async data => {
-    for (const ch of data) {
-      if (busy) {
-        if (interrupt) interrupt();   // any key stops a stream
-        continue;
-      }
-      if (ch === '\r' || ch === '\n') {
-        say();
-        const cmd = line.trim();
-        line = ''; cur = 0;
-        if (cmd) {
-          hist.push(cmd);
-          hpos = hist.length;
-          busy = true;
-          try { await run(cmd); }
-          catch (e) { err(e.message); }
-          busy = false;
-        }
-        prompt();
-      } else if (ch === '\x7f' || ch === '\b') {
-        if (cur > 0) { line = line.slice(0, cur - 1) + line.slice(cur); cur--; redraw(); }
-      } else if (ch === '\x03') {           // ctrl-c
-        say('^C'); line = ''; cur = 0; prompt();
-      } else if (ch === '\x0c') {           // ctrl-l
-        w('\x1b[2J\x1b[H'); prompt(); w(line);
-      } else if (ch === '\t') {
-        const hit = VERBS.filter(v => v.startsWith(line));
-        if (hit.length === 1) { line = hit[0] + ' '; cur = line.length; redraw(); }
-        else if (hit.length > 1) { say(); say(C.dim + hit.join('  ') + C.reset); redraw(); }
-      } else if (ch === '\x1b') {
-        // an escape sequence arrives whole in this chunk; handled below
-      } else if (ch >= ' ') {
-        line = line.slice(0, cur) + ch + line.slice(cur); cur++;
-        redraw();
-      }
-    }
-    // arrows come as CSI sequences in the same chunk
-    if (data.includes('\x1b[A') && !busy) {
-      if (hpos > 0) { line = hist[--hpos] || ''; cur = line.length; redraw(); }
-    } else if (data.includes('\x1b[B') && !busy) {
-      hpos = Math.min(hpos + 1, hist.length);
-      line = hist[hpos] || ''; cur = line.length; redraw();
-    } else if (data.includes('\x1b[D') && !busy) {
-      if (cur > 0) { cur--; w('\x1b[1D'); }
-    } else if (data.includes('\x1b[C') && !busy) {
-      if (cur < line.length) { cur++; w('\x1b[1C'); }
-    }
+  const shell = createShell({
+    vfs: nodeVfs(ctx.api),
+    cwd: '/',
+    env: { HOME: '/', PS1: '', NODE: (ctx.state.node && ctx.state.node.hostname) || 'jorm' },
+    stdout: write,
+    stderr: s => write(`${A.red}${s}${A.reset}`),
+    readLine,
+    builtins: jormBuiltins(ctx.api, ctx),
   });
 
-  // ── the verbs ───────────────────────────────────────────────────────────
-  const api = ctx.api;
+  const hostname = () => (ctx.state.node && ctx.state.node.hostname) || 'jorm';
+  const banner = () => {
+    write(`${A.bold}${hostname()}${A.reset} ${A.dim}— geas on @gcu/term. ` +
+      `'jhelp' for the jorm verbs, 'help' for the shell.${A.reset}\r\n`);
+    write(`${A.dim}the node's flash is the filesystem — try: ls -l /guests${A.reset}\r\n\r\n`);
+  };
 
-  async function run(input_) {
-    const [verb, ...rest] = input_.split(/\s+/);
-    const arg = rest[0];
-    const need = () => { if (!arg) throw new Error('which guest?'); return arg; };
+  const hist = ctx.state.shhist || (ctx.state.shhist = []);
+  let running = true;
 
-    switch (verb) {
-      case 'help':
-        for (const [cmd, what] of HELP)
-          say(`  ${C.orange}${cmd.padEnd(26)}${C.reset}${C.dim}${what}${C.reset}`);
-        return;
-      case 'clear':
-        w('\x1b[2J\x1b[H');
-        return;
-
-      case 'guests': {
-        const gs = await api('GET', '/api/guests');
-        if (!gs.length) return say(C.dim + 'no guests installed' + C.reset);
-        for (const g of gs) {
-          const col = g.state === 'running' ? C.green
-            : g.state === 'crashed' ? C.red
-            : g.state === 'unresponsive' ? C.yellow : C.dim;
-          say(`  ${C.dim}${String(g.num).padEnd(5)}${C.reset}` +
-            `${g.id.padEnd(12)} ${col}${g.state.padEnd(13)}${C.reset}` +
-            `${C.dim}${g.status || ''}${g.suspected ? '  ⚠ suspected' : ''}${C.reset}`);
-        }
-        return;
+  (async function repl() {
+    banner();
+    while (running) {
+      const { line, eof } = await readLine({
+        prompt: `${A.orange}${hostname()}${A.reset} ${A.dim}▸${A.reset} `,
+        onHistory: hist,
+      });
+      if (eof) break;
+      const src = (line || '').trim();
+      if (!src) continue;
+      hist.push(src);
+      try {
+        await shell.exec(src);
+      } catch (e) {
+        write(`${A.red}✗ ${e.message}${A.reset}\r\n`);
       }
-      case 'start': case 'stop': case 'restart': {
-        const r = await api('POST', `/api/guests/${need()}/${verb}`);
-        say(`${arg}: ${C.green}${r.state}${C.reset}`);
-        return;
-      }
-      case 'rm':
-        await api('DELETE', '/api/guests/' + need());
-        say(`removed ${arg}`);
-        ctx.refresh();
-        return;
-      case 'cat': {
-        const file = rest[1] || 'main.py';
-        const body = await api('GET', `/api/guests/${need()}/files/${file}`, undefined, true);
-        for (const l of String(body).split('\n')) say(l);
-        return;
-      }
-      case 'claims': {
-        const t = await api('GET', '/api/claims');
-        if (t.reserved_pins.length)
-          say(C.dim + 'reserved: pin ' + t.reserved_pins.join(', ') + C.reset);
-        if (!t.pins.length && !t.i2c.length)
-          return say(C.dim + 'nothing passed through' + C.reset);
-        for (const p of t.pins)
-          say(`  pin ${String(p.pin).padEnd(4)} ${C.blue}${p.mode.padEnd(11)}${C.reset}${p.owners.join(' · ')}`);
-        for (const e of t.i2c)
-          say(`  i2c ${e.bus}/0x${e.addr.toString(16)}  ${e.owner}`);
-        return;
-      }
-      case 'log': {
-        const got = await api('GET', '/api/node/log?n=' + (arg || 30));
-        for (const l of got.lines) {
-          const col = l.level === 'error' ? C.red : l.level === 'sys' ? C.blue : '';
-          const t = l.ts ? new Date(l.ts * 1000).toTimeString().slice(0, 8)
-            : '+' + (l.up || 0).toFixed(0) + 's';
-          say(`${C.dim}${t}${C.reset} ${col}${l.level.padEnd(5)}${C.reset} ${l.text}`);
-        }
-        return;
-      }
-      case 'retained': {
-        const t = await api('GET', '/api/bus/retained');
-        for (const topic of Object.keys(t).sort())
-          say(`  ${C.blue}${topic.padEnd(28)}${C.reset}${JSON.stringify(t[topic])}`);
-        return;
-      }
-      case 'pub': {
-        if (!arg) throw new Error('pub <topic> [json]');
-        let msg = rest.slice(1).join(' ');
-        try { msg = JSON.parse(msg); } catch (e) { if (!msg) msg = null; }
-        const r = await api('POST', '/api/bus/publish',
-          { topic: arg, msg: (msg && typeof msg === 'object') ? { ...msg, origin: 'ui' } : msg });
-        say(`published ${C.blue}${arg}${C.reset} → ${r.delivered} subscriber(s)`);
-        return;
-      }
-      case 'sub': {
-        const filter = arg || '#';
-        say(C.dim + `watching ${filter} — any key stops` + C.reset);
-        await new Promise(resolve => {
-          const off = ctx.watch(filter, (topic, msg) => {
-            const ui = msg && typeof msg === 'object' && msg.origin === 'ui';
-            say(`${ui ? C.orange + '▸ ' : C.blue}${topic.padEnd(26)}${C.reset}` +
-              JSON.stringify(msg));
-          });
-          interrupt = () => { off(); interrupt = null; say(C.dim + '— stopped' + C.reset); resolve(); };
-        });
-        return;
-      }
-      case 'lib': {
-        const rows = await api('GET', '/api/lib');
-        if (!rows.length) return say(C.dim + 'the library store is empty' + C.reset);
-        for (const r of rows)
-          say(`  ${r.name.padEnd(16)}${C.dim}${String(r.bytes).padStart(6)} B  ` +
-            `imported by: ${r.imported_by.join(', ') || '—'}${C.reset}`);
-        return;
-      }
-      case 'node': {
-        const n = await api('GET', '/api/node');
-        say(`${C.bold}${n.hostname}${C.reset} ${C.dim}· ${n.board}${C.reset}`);
-        say(`  heap free ${C.green}${(n.heap_free / 1048576).toFixed(2)} MB${C.reset}` +
-          `  ·  up ${(n.uptime_ms / 1000).toFixed(0)} s  ·  ${n.cluster}`);
-        say(`  clock: ${n.clock.synced ? C.green + n.clock.source
-          : C.yellow + 'UNSYNCED — timestamps are uptime'}${C.reset}`);
-        return;
-      }
-      case 'temp':
-        say(ctx.state.temp == null ? C.dim + 'no reading yet' + C.reset
-          : `${C.green}${ctx.state.temp} °C${C.reset}`);
-        return;
-      case 'reboot':
-        await api('POST', '/api/node/reboot');
-        say(C.yellow + 'rebooting…' + C.reset);
-        return;
-      default:
-        throw new Error(`unknown: ${verb} — try 'help'`);
     }
-  }
+  })();
 
-  banner();
-  prompt();
-  hidden.focus();
-
-  return () => {           // dispose: the Shell tab is leaving
+  return () => {
+    running = false;
     cancelAnimationFrame(raf);
     input.dispose();
     renderer.dispose();

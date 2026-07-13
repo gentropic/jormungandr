@@ -324,12 +324,48 @@ ok('and the rows have height — a terminal you cannot see is not a terminal',
     document.querySelector('.screen').getBoundingClientRect().height > 100));
 
 const shellSays = t => page.waitForFunction(
-  s => document.querySelector('.screen').textContent.includes(s), t, { timeout: 12000 });
+  s => document.querySelector('.screen').textContent.includes(s), t, { timeout: 20000 });
+// Wait for the prompt before typing. A shell that is not reading loses what you
+// type at it — which is true of every shell, and was true of this harness: it
+// fired the next command while the last was still printing, then blamed the
+// shell for the keystrokes it had thrown on the floor.
+const LF = String.fromCharCode(10);
+const atPrompt = () => page.waitForFunction(lf => {
+  const rows = document.querySelector('.screen').textContent
+    .split(lf).map(r => r.trimEnd()).filter(Boolean);
+  return rows.length > 0 && rows[rows.length - 1].endsWith('▸');
+}, LF, { timeout: 20000 });
+const shellRun = async cmd => {
+  await atPrompt();
+  await page.keyboard.type(cmd);
+  await page.keyboard.press('Enter');
+};
 await page.click('.screen');
-await page.keyboard.type('guests');
-await page.keyboard.press('Enter');
+await shellRun('guests');
 await shellSays('parrot');
 ok('`guests` lists them, in the terminal', true);
+
+// ── geas: the node's flash IS the filesystem ────────────────────────────
+await shellRun('ls /');
+await shellSays('guests');
+ok('`ls /` lists the ESP32 flash', true);
+
+await shellRun('cat /guests/blinky/main.py | wc -l');
+await shellSays('5');
+ok('a pipe — cat | wc -l — over the flash, on an ESP32', true);
+
+await shellRun('for g in /guests/*; do echo "seen $g"; done');
+await shellSays('seen /guests/blinky');
+ok('a for-loop with a glob over the flash', true);
+
+// and the two guards, from the shell that would most like to break them
+await shellRun('cat /settings.json');
+await shellSays('not readable here');
+ok('the shell cannot read the wifi psk', true);
+
+await shellRun('rm /main.py');
+await shellSays('managed by OTA');
+ok('the shell cannot brick the node — that door has a lock on the inside', true);
 
 await page.keyboard.type('temp');
 await page.keyboard.press('Enter');
@@ -337,10 +373,11 @@ await page.waitForFunction(() =>
   /\d+ °C/.test(document.querySelector('.screen').textContent), null, { timeout: 12000 });
 ok('`temp` reads the MCU sensor, in Celsius', true);
 
-await page.keyboard.type('nonsense');
-await page.keyboard.press('Enter');
-await shellSays('unknown: nonsense');
-ok('an unknown verb fails plainly', true);
+await shellRun('nonsense');
+// geas is POSIX: an unrecognised command is "not found" and exits 127. That is
+// the shell's answer, not ours, and it is the right one.
+await shellSays('command not found');
+ok('an unknown command fails the way a shell fails', true);
 
 // the terminal is themed by Switchboard, not by itself
 ok('the terminal takes its palette from --au-*',

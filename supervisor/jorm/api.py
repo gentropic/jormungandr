@@ -3,7 +3,7 @@ import json
 import os
 
 import machine
-from microdot import Microdot, Request, send_file
+from microdot import Microdot, Request, Response, send_file
 from microdot.websocket import with_websocket
 
 # The UI is one 46 KB file and OTA PUTs it whole; microdot's 16 KB default drops
@@ -13,6 +13,7 @@ Request.max_content_length = 256 * 1024
 Request.max_body_length = 256 * 1024
 
 from jorm import guests as store
+from jorm import fs
 from jorm import guestcfg
 from jorm.bus import BusError, valid_filter
 from jorm.fsutil import UnsafePath, safe_name, safe_relpath, write_atomic
@@ -417,6 +418,48 @@ def create_app(node, sup):
         except OSError:
             return {'error': 'no such library'}, 404
         return {'removed': mod}
+
+    # -- the filesystem (spec §6): what a shell mounts -------------------------
+
+    @app.errorhandler(fs.FsError)
+    async def fs_error(req, e):
+        return {'error': str(e)}, 403
+
+    @app.get('/api/fs')
+    @app.get('/api/fs/<path:path>')
+    async def api_fs_get(req, path=''):
+        path = fs.norm(path)
+        if fs.is_dir(path):
+            return {'path': '/' + path, 'dir': True, 'entries': fs.listdir(path)}
+        return Response(body=fs.read(path),
+                        headers={'Content-Type': 'application/octet-stream'})
+
+    @app.put('/api/fs/<path:path>')
+    async def api_fs_put(req, path):
+        path = fs.norm(path)
+        fs.write(path, req.body)
+        return {'written': '/' + path, 'bytes': len(req.body)}
+
+    @app.delete('/api/fs/<path:path>')
+    async def api_fs_delete(req, path):
+        path = fs.norm(path)
+        fs.remove(path)
+        return {'removed': '/' + path}
+
+    @app.post('/api/fs/<path:path>')
+    async def api_fs_post(req, path):
+        path = fs.norm(path)
+        op = req.args.get('op')
+        if op == 'mkdir':
+            fs.mkdir(path)
+            return {'created': '/' + path}
+        if op == 'rename':
+            dst = fs.norm((req.json or {}).get('to', ''))
+            fs.rename(path, dst)
+            return {'renamed': '/' + path, 'to': '/' + dst}
+        if op == 'stat':
+            return fs.stat(path)
+        return {'error': 'op is mkdir | rename | stat'}, 400
 
     # -- claims ----------------------------------------------------------------
 

@@ -446,14 +446,29 @@ try {
 if (!S.base && location.protocol !== 'file:') S.base = location.origin;
 
 // ── plumbing ────────────────────────────────────────────────────────────────
-async function api(method, path, body) {
+async function api(method, path, body, raw) {
+  // raw: file bodies are not JSON. The shell's VFS reads and writes them whole,
+  // and a filesystem that JSON-encodes its files is not a filesystem.
   const opts = { method, headers: { 'Authorization': 'Bearer ' + S.token } };
   if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
+    if (raw) {
+      opts.headers['Content-Type'] = 'application/octet-stream';
+      opts.body = body;
+    } else {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
   }
   const resp = await fetch(S.base + path, opts);
   if (resp.status === 401) { logout('token refused by the node'); throw new Error('unauthorized'); }
+  if (raw && method === 'GET') {
+    const text = await resp.text();
+    if (!resp.ok) {
+      try { throw new Error(JSON.parse(text).error); } catch (e) { throw new Error(e.message || text); }
+    }
+    // a directory answers JSON even here; hand it back so the VFS can tell
+    try { return JSON.parse(text); } catch (e) { return text; }
+  }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || (resp.status + ''));
   return data;
