@@ -94,9 +94,47 @@ Transports become something a node **advertises**, next to `runtimes`: `wifi`,
 an ESP-NOW-only leaf is represented through its gateway. The transport question and
 the capability/placement model are the same question.
 
+## 7. The smart leaf — a leaf that hosts guests (measured, real)
+
+The dumb leaf (§2–§5) runs a fixed I/O map and no code. But the question came up:
+does memory *force* that, or could a leaf run actual guests? Measured on the C3, the
+answer is that memory does not force it.
+
+A **smart leaf** (`role: "leaf-host"`, `jorm/leafhost.py`) keeps the guest machinery —
+`hal`, `guests`, the bus, claims — and drops only the HTTP server. Guests run locally;
+their bus traffic is pushed up to a flagship over one outbound connection (split-horizon,
+`$`-private, like the bridge). What the measurement showed on the actual C3:
+
+- **It fits.** With the full machinery loaded and a guest scanned, the C3 has ~96 KB
+  of heap free — room for a dozen guests. The server was ~10 KB of heap; dropping it
+  mattered for the *sockets* (lwIP), not the bytes.
+- **A real guest runs.** `pinger` hosted on the C3, its ticks pushed to the S3 over
+  WiFi. Arbitrary guest code, on a two-dollar board.
+- **The safety net holds.** `hog` (`while True: pass`) wedged the single core — there
+  is no preemption — and the hardware WDT reset the node; on reboot it named hog from
+  RTC memory, disabled its autostart, and came back hosting the good guest. The M5
+  silicon drill, on a C3.
+
+So the tiers are a real spectrum, and the middle one is proven:
+
+| tier | hosts guests | isolation | fits C3 |
+|---|---|---|---|
+| dumb leaf (§2) | no — I/O map | can't run away | yes |
+| **smart leaf (§7)** | **yes, serverless** | **soft: no preempt, no wall** | **yes, ~96 KB free** |
+| sol leaf | yes | hard: arena, preemptible | yes (later) |
+
+What a smart leaf costs is not memory but *trust*: mpy's soft isolation, sharper on a
+single core with less headroom — a runaway wedges the node until the WDT catches it,
+and one greedy guest can OOM it. The dumb leaf's fixed map is immune to both, which is
+what it buys. Guest *management* over the bus (install/start/stop without an HTTP API)
+is the piece still to build; today's smart leaf runs what is in its flash at boot.
+
 ## Status
 
-**Slice 1 (WiFi bus-client leaf): the target of this work.** Stripped boot, one
-outbound bus connection, the I/O map, measured on the actual C3 — does dropping the
-IP server leave lwIP the room the beacon and the uplink need? That measurement is the
-point. ESP-NOW, BLE, auto-discovery, and UI-side leaf editing are named for later.
+**Slice 1 (dumb WiFi bus-client leaf): done.** Stripped boot, one outbound bus
+connection, the I/O map — proven on a real C3 streaming to a real S3, no ENOMEM.
+
+**Smart leaf (§7): proven feasible on silicon.** Fits (~96 KB free), hosts a real
+guest, survives a runaway via the WDT drill. `jorm/leafhost.py`, `role: "leaf-host"`.
+Guest-management-over-the-bus, ESP-NOW, BLE, auto-discovery, and UI-side editing are
+named for later.

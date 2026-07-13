@@ -62,25 +62,13 @@ def wifi_up(node):
         ssid = node.settings.get('wifi', {}).get('ssid')
         if not ssid:
             fail('not connected and settings.json has no wifi.ssid')
-        psk = node.settings.get('wifi', {}).get('psk')
-        # Retry the association a few times, each with a fresh down-cycle. A C3's
-        # radio can miss the first attempt after a reset (a soft-reboot loop when it
-        # only tried once), so give it three ~12 s windows before giving up rather
-        # than one 15 s window. On a healthy link the first attempt connects at once.
-        for attempt in range(3):
-            if attempt:
-                wlan.active(False)
-                time.sleep_ms(200)
-                wlan.active(True)
-            node.log.append('sys', 'wifi: connecting to %s (try %d)' % (ssid, attempt + 1))
-            wlan.connect(ssid, psk)
-            deadline = time.ticks_add(time.ticks_ms(), 12000)
-            while not wlan.isconnected() and time.ticks_diff(deadline, time.ticks_ms()) > 0:
-                time.sleep_ms(200)
-            if wlan.isconnected():
-                break
-        else:
-            fail('wifi: no connection after 3 tries')
+        node.log.append('sys', 'wifi: connecting to %s' % ssid)
+        wlan.connect(ssid, node.settings.get('wifi', {}).get('psk'))
+        deadline = time.ticks_add(time.ticks_ms(), 15000)
+        while not wlan.isconnected():
+            if time.ticks_diff(deadline, time.ticks_ms()) < 0:
+                fail('wifi: no connection after 15 s')
+            time.sleep_ms(200)
     node.ip = wlan.ifconfig()[0]
     node.wlan = wlan
     node.log.append('sys', 'wifi up: %s as %s' % (node.ip, node.hostname))

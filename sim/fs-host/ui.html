@@ -1,0 +1,1741 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jorm</title>
+<!-- Jormungandr: the world-serpent, an ouroboros. Inline SVG data-URI so
+     the single-file UI stays a single file and the tab icon costs no request.
+     Theme-aware via a media query inside the SVG. -->
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHN0eWxlPi5ze2ZpbGw6IzhCM0YwMH0ua3tzdHJva2U6IzhCM0YwMH1AbWVkaWEocHJlZmVycy1jb2xvci1zY2hlbWU6ZGFyayl7LnN7ZmlsbDojRkI5MDQ0fS5re3N0cm9rZTojRkI5MDQ0fX08L3N0eWxlPjxnIHRyYW5zZm9ybT0icm90YXRlKC01NyAxNiAxNikiPjxjaXJjbGUgY2xhc3M9ImsiIGN4PSIxNiIgY3k9IjE2IiByPSIxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSI0LjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWRhc2hhcnJheT0iNTMgOS44MyIvPjxjaXJjbGUgY2xhc3M9InMiIGN4PSIyMS41MyIgY3k9IjcuNjciIHI9IjMuMCIvPjxjaXJjbGUgY3g9IjIyLjM0IiBjeT0iOS4xNyIgcj0iMS4wIiBmaWxsPSIjMTUxNzFBIi8+PC9nPjwvc3ZnPg==">
+<script>
+// first-paint theme, before CSS: stored choice, else OS preference
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('jorm.theme'); } catch (e) {}
+  if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+<style>
+/* ── Switchboard 1.3 tokens, verbatim (auditable/ext/switchboard) ────────── */
+:root {
+  --sw-bg-deep:#C2C1BE; --sw-bg:#D2D1CE; --sw-bg-raised:#E4E3E1; --sw-bg-bright:#EDECEB;
+  --sw-text:#232322; --sw-text-mid:#504F4C; --sw-text-soft:#5A5856;
+  --sw-border:#B3B1AD; --sw-border-soft:#C6C4C1; --sw-rule:#A5A3A0;
+  --sw-orange:#8B3F00; --sw-orange-soft:#FDE0CF;
+  --sw-blue:#005C97;   --sw-blue-soft:#CCE9FE;
+  --sw-green:#00602B;  --sw-green-soft:#D2ECD7;
+  --sw-yellow:#6F5700; --sw-yellow-soft:#F1E4CB;
+  --sw-red:#99191E;    --sw-red-soft:#FFDDD8;
+  --sw-violet:#793A8D; --sw-violet-soft:#F2DFF7;
+  --sw-mono:'Space Mono','JetBrains Mono','Consolas',monospace;
+  --sw-sans:'Barlow',system-ui,sans-serif;
+  --sw-radius:3px; --sw-radius-lg:4px;
+  --sw-dur-fast:0.12s; --sw-dur:0.2s; --sw-ease:cubic-bezier(0.2,0,0,1);
+}
+[data-theme="dark"] {
+  --sw-bg-deep:#0E1012; --sw-bg:#15171A; --sw-bg-raised:#1D2024; --sw-bg-bright:#25282D;
+  --sw-text:#DDDCDA; --sw-text-mid:#9E9C98; --sw-text-soft:#83817E;
+  --sw-border:#2F3338; --sw-border-soft:#24272B; --sw-rule:#3A3E44;
+  --sw-orange:#FB9044; --sw-orange-soft:#2E2119;
+  --sw-blue:#008CD1;   --sw-blue-soft:#16262F;
+  --sw-green:#5CCB80;  --sw-green-soft:#1A261D;
+  --sw-yellow:#FFD73A; --sw-yellow-soft:#292317;
+  --sw-red:#E75A51;    --sw-red-soft:#30201D;
+  --sw-violet:#EC9FFF; --sw-violet-soft:#2A212C;
+}
+:root {
+  --au-surface-deep:var(--sw-bg-deep); --au-surface:var(--sw-bg);
+  --au-surface-raised:var(--sw-bg-raised); --au-surface-bright:var(--sw-bg-bright);
+  --au-fg:var(--sw-text); --au-fg-muted:var(--sw-text-mid); --au-fg-soft:var(--sw-text-soft);
+  --au-border:var(--sw-border); --au-border-soft:var(--sw-border-soft); --au-rule:var(--sw-rule);
+  --au-action:var(--sw-orange); --au-action-soft:var(--sw-orange-soft);
+  --au-info:var(--sw-blue); --au-info-soft:var(--sw-blue-soft);
+  --au-success:var(--sw-green); --au-success-soft:var(--sw-green-soft);
+  --au-warn:var(--sw-yellow); --au-warn-soft:var(--sw-yellow-soft);
+  --au-error:var(--sw-red); --au-error-soft:var(--sw-red-soft);
+  --au-selected:var(--sw-violet); --au-selected-soft:var(--sw-violet-soft);
+  --au-font-mono:var(--sw-mono); --au-font-sans:var(--sw-sans);
+  --au-radius:var(--sw-radius); --au-radius-lg:var(--sw-radius-lg);
+  --au-dur-fast:var(--sw-dur-fast); --au-dur:var(--sw-dur); --au-ease:var(--sw-ease);
+}
+
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; }
+body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 var(--au-font-sans); }
+.app { display:flex; flex-direction:column; min-height:100vh; }
+
+.mast { display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+  padding:.55rem 1rem; background:var(--au-surface-raised); border-bottom:1px solid var(--au-rule); }
+.brand { display:flex; align-items:baseline; gap:.55rem; }
+.brand b { font:700 1rem var(--au-font-sans); letter-spacing:.08em; }
+.brand .kana { font:400 .62rem var(--au-font-mono); color:var(--au-fg-soft); letter-spacing:.18em; }
+.hostchip { font:700 .7rem var(--au-font-mono); letter-spacing:.1em; color:var(--au-info);
+  background:var(--au-info-soft); border-radius:var(--au-radius); padding:.1rem .45rem; }
+.mast-gauges { display:flex; gap:1.1rem; align-items:center; margin-left:auto; }
+.mgauge { display:flex; flex-direction:column; gap:.05rem; }
+.mgauge .lbl { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; color:var(--au-fg-soft); text-transform:uppercase; }
+.mgauge .val { font:700 .95rem var(--au-font-mono); font-variant-numeric:tabular-nums;
+  display:flex; align-items:center; gap:.4rem; min-height:1.35rem; }
+#tick { color:var(--au-success); opacity:.15; transition:opacity .55s var(--au-ease); }
+#tick.lit { opacity:1; transition:none; }
+#link.up { color:var(--au-success); } #link.down { color:var(--au-error); }
+
+.stalebar { display:none; align-items:center; gap:.6rem; padding:.4rem 1rem;
+  background:var(--au-warn-soft); color:var(--au-warn); border-bottom:1px solid var(--au-border);
+  font:700 .72rem var(--au-font-mono); letter-spacing:.12em; text-transform:uppercase; }
+.app.stale .stalebar { display:flex; }
+.app.stale .cols { filter:grayscale(.55) contrast(.92); opacity:.62; }
+
+.toasts { position:fixed; right:1rem; bottom:1rem; display:flex; flex-direction:column;
+  gap:.4rem; z-index:1000; max-width:34rem; }
+.toast { font:400 .78rem var(--au-font-mono); border-radius:var(--au-radius);
+  padding:.45rem .7rem; border:1px solid var(--au-border); }
+.toast.fault { color:var(--au-error); background:var(--au-error-soft); }
+.toast.info { color:var(--au-info); background:var(--au-info-soft); }
+
+.cols { display:flex; flex:1; min-height:0; }
+.tree { width:200px; flex:none; background:var(--au-surface-raised);
+  border-right:1px solid var(--au-border); padding:.5rem 0; }
+.tree .sect { font:400 .62rem var(--au-font-mono); letter-spacing:.22em; text-transform:uppercase;
+  color:var(--au-fg-soft); padding:.35rem .8rem .2rem; }
+.trow { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left;
+  font:400 .78rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
+  border-left:2px solid transparent; padding:.3rem .8rem; cursor:pointer; }
+/* One indent step per level. The root had the base .8rem and its child had .4rem,
+   so the tree read backwards — the parent looked nested inside its own children. */
+.trow.root { padding-left:.45rem; font-weight:700; }
+.trow.grp  { padding-left:1.35rem; }
+.trow.g    { padding-left:2.9rem; }
+.tw { width:.9em; display:inline-block; text-align:center; color:var(--au-fg-soft); }
+.tnum { color:var(--au-fg-soft); margin-right:.15rem; }
+.trename { font:400 .78rem var(--au-font-mono); color:var(--au-fg);
+  background:var(--au-surface); border:1px solid var(--au-action); border-radius:var(--au-radius);
+  padding:.15rem .3rem; width:calc(100% - 1.6rem); margin:.15rem .5rem; }
+.trename:focus-visible { outline:none; box-shadow:0 0 0 3px var(--au-action-soft); }
+.trow:hover { background:var(--au-surface-bright); }
+.trow.sel { background:var(--au-selected-soft); border-left-color:var(--au-selected); }
+.trow .st { width:1em; text-align:center; }
+.st.go { color:var(--au-success); } .st.fault { color:var(--au-error); }
+.st.caution { color:var(--au-warn); } .st.off { color:var(--au-fg-soft); }
+
+.content { flex:1; min-width:0; padding:0 1rem 1.5rem; }
+.tabs { display:flex; gap:.15rem; border-bottom:1px solid var(--au-rule); margin:0 -1rem 1rem; padding:0 1rem; }
+.tab { font:700 .72rem var(--au-font-mono); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--au-fg-muted); background:none; border:none; cursor:pointer;
+  padding:.55rem .7rem .45rem; border-bottom:2px solid transparent; margin-bottom:-1px; }
+.tab:hover { color:var(--au-fg); background:var(--au-surface-bright); }
+.tab.on { color:var(--au-fg); border-bottom-color:var(--au-selected); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(310px,1fr)); gap:1rem; align-items:start; }
+
+.panel { background:var(--au-surface-raised); border:1px solid var(--au-border); border-radius:var(--au-radius-lg); }
+.panel-hd { display:flex; justify-content:space-between; align-items:center; gap:.6rem;
+  background:var(--au-surface-bright); border-bottom:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg) var(--au-radius-lg) 0 0;
+  font:400 .72rem var(--au-font-mono); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--au-fg-muted); padding:.4rem .7rem; }
+.panel-bd { padding:.7rem; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+  background:var(--au-success); box-shadow:0 0 0 2px var(--au-success-soft); margin-right:.45rem; }
+
+.badge { display:inline-flex; align-items:center; gap:.35rem;
+  font:700 .66rem var(--au-font-mono); letter-spacing:.1em; text-transform:uppercase;
+  border-radius:var(--au-radius); padding:.12rem .5rem; }
+.badge::before { content:'●'; font-size:.7em; }
+.badge.go { color:var(--au-success); background:var(--au-success-soft); }
+.badge.fault { color:var(--au-error); background:var(--au-error-soft); }
+.badge.caution { color:var(--au-warn); background:var(--au-warn-soft); }
+.badge.info { color:var(--au-info); background:var(--au-info-soft); }
+.badge.off { color:var(--au-fg-soft); background:var(--au-surface-bright); }
+
+.btn { font:700 .78rem var(--au-font-mono); letter-spacing:.1em; text-transform:uppercase;
+  border-radius:var(--au-radius); padding:.4rem .9rem; cursor:pointer;
+  transition:filter var(--au-dur-fast) var(--au-ease); }
+.btn:hover { filter:brightness(1.08); } .btn:active { filter:brightness(.92); }
+.btn:focus-visible { outline:2px solid var(--au-action); outline-offset:1px; }
+.btn[disabled] { opacity:.5; cursor:not-allowed; }
+.btn.primary { background:var(--au-action); color:#FFFFFF; border:none; }
+.btn.secondary { background:transparent; color:var(--au-fg); border:1px solid var(--au-border); }
+.btn.secondary:hover { color:var(--au-action); border-color:var(--au-action); }
+.btn.ghost { background:transparent; color:var(--au-info); border:none; }
+
+.kv { display:grid; grid-template-columns:max-content 1fr; gap:.2rem .9rem;
+  font:400 .78rem var(--au-font-mono); margin:0; }
+.kv dt { color:var(--au-fg-soft); text-transform:uppercase; letter-spacing:.12em; font-size:.66rem; padding-top:.15rem; }
+.kv dd { margin:0; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+table.cl { width:100%; border-collapse:collapse; font:400 .78rem var(--au-font-mono); }
+.cl th { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; text-transform:uppercase;
+  color:var(--au-fg-soft); text-align:left; padding:.25rem .5rem; border-bottom:1px solid var(--au-border); }
+.cl td { padding:.3rem .5rem; border-bottom:1px solid var(--au-border-soft); font-variant-numeric:tabular-nums; }
+
+.readout { background:var(--au-surface-deep); border:1px solid var(--au-border); border-radius:var(--au-radius-lg); }
+.readout-top { display:flex; justify-content:space-between; font:400 .66rem var(--au-font-mono);
+  letter-spacing:.14em; text-transform:uppercase; color:var(--au-fg-muted);
+  padding:.4rem .7rem; border-bottom:1px solid var(--au-border-soft); }
+.readout-bd { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:.7rem; padding:.7rem; }
+.gauge .glbl { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; text-transform:uppercase; color:var(--au-fg-soft); }
+.gauge .gval { font:700 1.35rem var(--au-font-mono); font-variant-numeric:tabular-nums; }
+.gauge .gval .unit { font-size:.68rem; font-weight:400; color:var(--au-fg-soft); margin-left:.2rem; }
+.gauge.go .gval { color:var(--au-success); } .gauge.caution .gval { color:var(--au-warn); }
+.gauge.fault .gval { color:var(--au-error); }
+
+.term { background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.6rem .7rem; overflow:auto; max-height:60vh;
+  font:400 .78rem/1.6 var(--au-font-mono); }
+.term .row { white-space:pre-wrap; }
+.term .t { color:var(--au-fg-soft); margin-right:.6rem; }
+.term .lv { display:inline-block; width:3.4em; color:var(--au-fg-soft); }
+.term .sys { color:var(--au-info); } .term .err { color:var(--au-error); }
+.term .topic { color:var(--au-info); display:inline-block; min-width:15em; margin-right:.6em; }
+.term .row.uiline, .term .row.uiline .topic { color:var(--au-action); }
+.term .from { color:var(--au-success); margin-right:.6em; }
+
+svg.spark { display:block; }
+.sp-line { fill:none; stroke:var(--au-fg-muted); stroke-width:1.2; }
+.sp-fill { fill:var(--au-border-soft); opacity:.5; stroke:none; }
+.sp-dot { fill:var(--au-info); }
+
+.field { display:flex; flex-direction:column; gap:.2rem; margin-bottom:.7rem; }
+.field label { font:400 .7rem var(--au-font-mono); letter-spacing:.12em; text-transform:uppercase; color:var(--au-fg-soft); }
+.field input { font:400 .9rem var(--au-font-mono); color:var(--au-fg);
+  background:var(--au-surface); border:1px solid var(--au-border); border-radius:var(--au-radius);
+  padding:.35rem .5rem; }
+.field input:focus-visible { outline:none; border-color:var(--au-action); box-shadow:0 0 0 3px var(--au-action-soft); }
+
+/* the console's input line — Switchboard §6.6: this is the terminal surface,
+   so the prompt is action orange and the cursor jumps (steps), never fades */
+.cline { display:flex; align-items:center; gap:.5rem; margin-top:.5rem;
+  background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.35rem .6rem; }
+.cline .prompt { font:700 .82rem var(--au-font-mono); color:var(--au-action); }
+.cline input { flex:1; font:400 .82rem var(--au-font-mono); color:var(--au-fg);
+  background:none; border:none; outline:none; }
+.cline input::placeholder { color:var(--au-fg-soft); }
+.cline.deaf { opacity:.6; }
+.term .in { color:var(--au-action); }
+.term .row.echo { color:var(--au-action); }
+
+/* @gcu/term's structural sheet, inlined, plus the one thing that matters: its
+   palette is CSS custom properties, so mapping --gcu-term-* onto Switchboard's
+   --au-* themes the terminal in both light and dark without it knowing either
+   word. That is why it is @gcu/term and not xterm.js. */
+/*
+ * @gcu/term — structural CSS
+ * Required for the renderer to behave correctly. The position,
+ * pointer-events, mix-blend-mode, contain, and user-select declarations
+ * encode the rendering contract; do not override them. Decorative styling
+ * (font, colors, cursor color) lives in term-default.css and is intended
+ * to be replaced by the host.
+ */
+
+.screen {
+  position: relative;
+  display: block;
+  white-space: pre;
+  overflow: hidden;
+  user-select: text;
+  cursor: text;
+}
+.screen .row {
+  display: block;
+  white-space: pre;
+  contain: layout style;
+}
+.screen .cur {
+  position: absolute;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  z-index: 2;
+}
+.screen.app-mouse {
+  user-select: none;
+  cursor: default;
+}
+
+.termhost {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.termhost > textarea {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  margin: 0; padding: 0; border: 0; outline: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font: inherit;
+  pointer-events: none;
+  z-index: 1;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+}
+/* the box is ours; the screen's layout is term.css's contract — do not fight it */
+#shellhost { background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.5rem .6rem; overflow:auto; min-height:24rem; }
+.screen {
+  font: 400 13px/1.35 var(--au-font-mono);
+  color: var(--au-fg);
+  background: var(--au-surface-deep);
+  --gcu-term-bg: var(--au-surface-deep);
+  --gcu-term-fg: var(--au-fg);
+  --gcu-term-cursor: var(--au-action);
+  --gcu-term-selection: var(--au-selected-soft);
+  --gcu-term-color-0:  var(--au-surface-deep);   --gcu-term-color-8:  var(--au-fg-soft);
+  --gcu-term-color-1:  var(--au-error);          --gcu-term-color-9:  var(--au-error);
+  --gcu-term-color-2:  var(--au-success);        --gcu-term-color-10: var(--au-success);
+  --gcu-term-color-3:  var(--au-warn);           --gcu-term-color-11: var(--au-warn);
+  --gcu-term-color-4:  var(--au-info);           --gcu-term-color-12: var(--au-info);
+  --gcu-term-color-5:  var(--au-selected);       --gcu-term-color-13: var(--au-selected);
+  --gcu-term-color-6:  var(--au-info);           --gcu-term-color-14: var(--au-info);
+  --gcu-term-color-7:  var(--au-fg);             --gcu-term-color-15: var(--au-fg);
+}
+/* An empty row div collapses; term-default.css gives it an explicit height for
+   exactly that reason, and I had inlined only the structural sheet — so every
+   row was 0px and the whole terminal was invisible while rendering perfectly. */
+.screen .row { height: 1.35em; }
+.screen .cur { background: var(--au-action); }
+#shellhost .note { padding:.6rem; }
+
+/* the file editor: ed is right in a terminal and wrong for everyday editing */
+.filebar { display:flex; gap:.4rem; flex-wrap:wrap; align-items:center; margin-bottom:.5rem; }
+.fbtn { font:400 .78rem var(--au-font-mono); color:var(--au-fg-muted);
+  background:var(--au-surface-bright); border:1px solid var(--au-border);
+  border-radius:var(--au-radius); padding:.25rem .55rem; cursor:pointer; }
+.fbtn:hover { color:var(--au-fg); border-color:var(--au-action); }
+.fbtn.on { color:var(--au-selected); border-color:var(--au-selected);
+  background:var(--au-selected-soft); }
+#editor { width:100%; min-height:24rem; resize:vertical;
+  font:400 .82rem/1.5 var(--au-font-mono); color:var(--au-fg);
+  background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.6rem .7rem; tab-size:4; }
+#editor:focus-visible { outline:none; border-color:var(--au-action);
+  box-shadow:0 0 0 3px var(--au-action-soft); }
+#editor[readonly] { opacity:.7; }
+
+.note { font:400 .72rem var(--au-font-mono); color:var(--au-fg-soft); }
+.busbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.6rem;
+  font:400 .78rem var(--au-font-mono); }
+.busbar input { font:400 .8rem var(--au-font-mono); background:var(--au-surface);
+  color:var(--au-fg); border:1px solid var(--au-border); border-radius:var(--au-radius); padding:.3rem .5rem; }
+pre.tb { font:400 .74rem/1.5 var(--au-font-mono); color:var(--au-error);
+  background:var(--au-error-soft); border-radius:var(--au-radius); padding:.5rem .6rem;
+  overflow-x:auto; margin:.6rem 0 0; }
+
+.login { max-width:22rem; margin:12vh auto; }
+
+/* declarative panels (spec §7) */
+.pblock { margin-top:0; }
+.pblock .gval { min-height:1.6rem; }
+input[type=range] { accent-color:var(--au-action); width:100%; }
+.gbar { height:4px; background:var(--au-border-soft); border-radius:2px; margin-top:.3rem; }
+.gbar i { display:block; height:100%; width:0; background:var(--au-success); border-radius:2px; }
+.stale-p { filter:grayscale(.6); opacity:.6; }
+.wsel { font:400 .85rem var(--au-font-mono); background:var(--au-surface); color:var(--au-fg);
+  border:1px solid var(--au-border); border-radius:var(--au-radius); padding:.25rem .4rem; }
+.btn.armed { color:var(--au-warn); border-color:var(--au-warn); }
+.wtext { font:400 .74rem/1.5 var(--au-font-mono); white-space:pre-wrap; }
+.wind { font:700 .9rem var(--au-font-mono); }
+
+/* context menu (Switchboard: depth is surface register + 1px border, never a
+   drop shadow — a popup that looks like Material wandered in is the wrong popup) */
+.menu { position:fixed; z-index:1300; min-width:12.5rem; padding:.25rem;
+  background:var(--au-surface-bright); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); }
+.menu button { display:flex; align-items:center; gap:.6rem; width:100%; text-align:left;
+  font:400 .8rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
+  border-radius:var(--au-radius); padding:.4rem .55rem; cursor:pointer; }
+.menu button:hover:not(:disabled) { background:var(--au-selected-soft); color:var(--au-selected); }
+.menu button:disabled { opacity:.4; cursor:not-allowed; }
+.menu button.danger { color:var(--au-error); }
+.menu button.danger:hover:not(:disabled) { background:var(--au-error-soft); color:var(--au-error); }
+.menu button.armed { background:var(--au-error-soft); color:var(--au-error); }
+.menu button .mg { width:1.1em; text-align:center; color:var(--au-fg-soft); }
+.menu button:hover:not(:disabled) .mg { color:inherit; }
+.menu .msep { height:1px; margin:.25rem .3rem; background:var(--au-border-soft); }
+.menu .mhead { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; text-transform:uppercase;
+  color:var(--au-fg-soft); padding:.35rem .55rem .25rem; }
+.backdrop { position:fixed; inset:0; z-index:1250; }
+
+/* the drawer's scrim: tap anywhere off the tree to dismiss it */
+.scrim { position:fixed; inset:0; z-index:1140; background:var(--au-surface-deep);
+  opacity:0; pointer-events:none; transition:opacity var(--au-dur) var(--au-ease); }
+.app.drawer .scrim { opacity:.55; pointer-events:auto; }
+
+/* drawer trigger — desktop never sees it */
+#drawerbtn { display:none; }
+
+@media (prefers-reduced-motion: reduce) { .btn, .tree { transition:none; } }
+
+/* ── phones ──────────────────────────────────────────────────────────────
+   The tree becomes a drawer rather than a squashed column: a resource tree is
+   for navigating, and on a phone you navigate then read. Selecting closes it. */
+@media (max-width: 760px) {
+  #drawerbtn { display:inline-block; order:-1; }
+  .mast { gap:.6rem .8rem; padding:.5rem .7rem; }
+  .brand .kana { display:none; }
+  .mast-gauges { gap:.8rem; width:100%; margin-left:0; overflow-x:auto; }
+  .mgauge.wide { display:none; }        /* uptime is the first thing a phone can spare */
+  .content { padding:0 .7rem 1.5rem; }
+  .tabs { margin:0 -.7rem 1rem; padding:0 .7rem; overflow-x:auto; }
+  .tab { padding:.6rem .55rem .5rem; }
+
+  /* The masthead sits ABOVE the drawer, or an open drawer covers the very button
+     that closes it — which a 390px viewport found the moment it was asked to. */
+  .mast { position:sticky; top:0; z-index:1200; }
+  /* below the masthead — whose height depends on how many gauges wrapped, so it
+     is measured, not guessed. A guessed offset hid the top of the tree. */
+  .tree {
+    position:fixed; top:var(--mast-h, 3.2rem); bottom:0; left:0; width:16rem; z-index:1150;
+    transform:translateX(-100%); transition:transform var(--au-dur) var(--au-ease);
+    overflow-y:auto; border-right:1px solid var(--au-border); padding-top:.5rem;
+  }
+  .scrim { top:var(--mast-h, 3.2rem); }
+  .tree.open { transform:translateX(0); }
+  .grid { grid-template-columns:1fr; }
+  .kv { grid-template-columns:1fr; gap:.05rem .9rem; }
+  .kv dt { padding-top:.4rem; }
+  table.cl { font-size:.72rem; }
+  .panel-bd, .readout-bd { overflow-x:auto; }
+  .busbar input { flex:1; min-width:6rem; }
+}
+
+/* Touch: Switchboard's floor is 44px, and it is a floor, not a suggestion. */
+@media (pointer: coarse) {
+  .trow, .trow.g { min-height:var(--au-tap); }
+  .menu button { min-height:var(--au-tap); }
+  .tab { min-height:var(--au-tap); }
+  .btn { min-height:var(--au-tap); padding:.5rem 1rem; }
+  .tw { min-width:1.6em; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="mast">
+    <button class="btn ghost" id="drawerbtn" title="resources" aria-label="resources">☰</button>
+    <span class="brand"><b>JORMUNGANDR</b><span class="kana">ヨルムンガンド</span></span>
+    <span class="hostchip" id="hostchip">…</span>
+    <span class="mast-gauges" id="mastg" hidden>
+      <span class="mgauge"><span class="lbl">Heap free</span>
+        <span class="val"><span id="heapval">—</span>
+          <svg class="spark" id="sp-heap" width="72" height="22" viewBox="0 0 72 22"></svg></span></span>
+      <span class="mgauge wide"><span class="lbl">Uptime</span><span class="val" id="upval">—</span></span>
+      <span class="mgauge"><span class="lbl">Guests</span><span class="val" id="gval">—</span></span>
+      <span class="mgauge"><span class="lbl">Link · Tick</span>
+        <span class="val"><span id="link" class="down">◉</span><span id="tick">◉</span></span></span>
+      <span class="badge caution" id="clockchip" hidden
+            title="the node's clock is not NTP-synced; timestamps are uptime, not wall clock"
+        >⚠ clock unsynced</span>
+      <button class="btn ghost" id="themebtn" title="theme">◐</button>
+    </span>
+  </header>
+  <div class="stalebar">⚠ signal lost — <span id="stalesecs">last data ? s ago</span> · reconnecting…</div>
+  <div class="scrim" id="scrim"></div>
+  <div class="cols" id="cols">
+    <nav class="tree" id="tree"></nav>
+    <main class="content" id="main"></main>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SCROLLBACK = 500;
+
+const S = {
+  base: '', token: '',
+  node: null, nodeAt: 0, guests: {}, heap: [],
+  sel: null,                       // null = node, else guest id
+  tabNode: 'summary', tabGuest: 'overview',
+  ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
+  conWS: null, logTimer: null, busPaused: false,
+  panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
+  clockOk: true, temp: null, drops: 0, watchers: [],
+  open: { dc: true, node: true }, renaming: false,
+  peers: [], clusterName: null,    // the rest of the cluster (one §1)
+};
+try {
+  S.token = localStorage.getItem('jorm.token') || '';
+  S.base = localStorage.getItem('jorm.url') || '';
+} catch (e) {}
+if (!S.base && location.protocol !== 'file:') S.base = location.origin;
+
+// ── plumbing ────────────────────────────────────────────────────────────────
+async function api(method, path, body, raw) {
+  // raw: file bodies are not JSON. The shell's VFS reads and writes them whole,
+  // and a filesystem that JSON-encodes its files is not a filesystem.
+  const opts = { method, headers: { 'Authorization': 'Bearer ' + S.token } };
+  if (body !== undefined) {
+    if (raw) {
+      opts.headers['Content-Type'] = 'application/octet-stream';
+      opts.body = body;
+    } else {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+  }
+  const resp = await fetch(S.base + path, opts);
+  if (resp.status === 401) { logout('token refused by the node'); throw new Error('unauthorized'); }
+  if (raw && method === 'GET') {
+    const text = await resp.text();
+    if (!resp.ok) {
+      try { throw new Error(JSON.parse(text).error); } catch (e) { throw new Error(e.message || text); }
+    }
+    // a directory answers JSON even here; hand it back so the VFS can tell
+    try { return JSON.parse(text); } catch (e) { return text; }
+  }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || (resp.status + ''));
+  return data;
+}
+
+// ── context menus ─────────────────────────────────────────────────────────
+// Proxmox is a right-click program. On a phone there is no right button, so a
+// long press is the same gesture — the menu is the same menu either way.
+function closeMenu() {
+  const m = $('#menu'), b = $('#backdrop');
+  if (m) m.remove();
+  if (b) b.remove();
+}
+
+function openMenu(x, y, title, items) {
+  closeMenu();
+  const back = document.createElement('div');
+  back.className = 'backdrop';
+  back.id = 'backdrop';
+  back.onclick = closeMenu;
+  back.oncontextmenu = ev => { ev.preventDefault(); closeMenu(); };
+  document.body.appendChild(back);
+
+  const menu = document.createElement('div');
+  menu.className = 'menu';
+  menu.id = 'menu';
+  if (title) {
+    const h = document.createElement('div');
+    h.className = 'mhead';
+    h.textContent = title;
+    menu.appendChild(h);
+  }
+  for (const item of items) {
+    if (item === '-') {
+      const sep = document.createElement('div');
+      sep.className = 'msep';
+      menu.appendChild(sep);
+      continue;
+    }
+    const b = document.createElement('button');
+    b.className = item.danger ? 'danger' : '';
+    b.disabled = !!item.disabled;
+    b.innerHTML = `<span class="mg">${esc(item.glyph || '')}</span>${esc(item.label)}`;
+    b.onclick = () => {
+      // Destructive actions arm rather than ask: one more deliberate click on a
+      // control that has visibly changed its mind about what it does.
+      if (item.confirm && b.dataset.armed !== '1') {
+        b.dataset.armed = '1';
+        b.classList.add('armed');
+        b.innerHTML = `<span class="mg">⚠</span>${esc(item.confirm)}`;
+        return;
+      }
+      closeMenu();
+      item.run();
+    };
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+
+  // keep it on screen — a menu that opens off the bottom of a phone is no menu
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 6)) + 'px';
+  menu.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 6)) + 'px';
+}
+
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
+
+function clusterMenu(x, y) {
+  openMenu(x, y, (S.node && S.node.cluster) || 'Cluster', [
+    { glyph: '✎', label: 'Rename cluster…', run: () => { S.renaming = true; renderTree(); } },
+    '-',
+    { glyph: '▾', label: 'Expand all', run: () => {
+        S.open.dc = S.open.node = true; renderTree();
+      } },
+    { glyph: '▸', label: 'Collapse all', run: () => {
+        S.open.node = false; renderTree();
+      } },
+  ]);
+}
+
+function nodeMenu(x, y) {
+  const url = S.base;
+  openMenu(x, y, S.node ? S.node.hostname : 'node', [
+    { glyph: '◫', label: 'Summary', run: () => { select(null); setTab('summary'); } },
+    { glyph: '⇅', label: 'Bus monitor', run: () => { select(null); setTab('bus'); } },
+    { glyph: '⊞', label: 'Claims', run: () => { select(null); setTab('claims'); } },
+    { glyph: '≡', label: 'Log', run: () => { select(null); setTab('log'); } },
+    '-',
+    { glyph: '↻', label: 'Reboot node', danger: true, confirm: 'Reboot — sure?',
+      run: async () => {
+        try { await api('POST', '/api/node/reboot'); toast('rebooting ' + S.node.hostname); }
+        catch (e) { toast('reboot: ' + e.message, 'fault'); }
+      } },
+    { glyph: '⚙', label: 'Maintenance mode', danger: true, confirm: 'Drop to the REPL?',
+      run: async () => {
+        try {
+          await api('POST', '/api/node/maintenance');
+          toast('rebooting into maintenance — the node will be off the network', 'fault');
+        } catch (e) { toast('maintenance: ' + e.message, 'fault'); }
+      } },
+    '-',
+    { glyph: '⧉', label: 'Copy node URL', run: () => {
+        navigator.clipboard && navigator.clipboard.writeText(url);
+        toast('copied ' + url);
+      } },
+  ]);
+}
+
+function guestMenu(x, y, id) {
+  const g = S.guests[id];
+  if (!g) return;
+  const live = g.state === 'running' || g.state === 'unresponsive';
+  const act = async verb => {
+    try { await api('POST', `/api/guests/${id}/${verb}`); }
+    catch (e) { toast(`${verb} ${id}: ${e.message}`, 'fault'); }
+  };
+  openMenu(x, y, `${g.num || '—'} (${id})`, [
+    { glyph: '▶', label: 'Start', disabled: live, run: () => act('start') },
+    { glyph: '■', label: 'Stop', disabled: !live, run: () => act('stop') },
+    { glyph: '↻', label: 'Restart', run: () => act('restart') },
+    '-',
+    { glyph: '◫', label: 'Overview', run: () => { select(id); setTab('overview'); } },
+    { glyph: '≡', label: 'Console', run: () => { select(id); setTab('console'); } },
+    { glyph: '⚙', label: 'Config', run: () => { select(id); setTab('config'); } },
+    '-',
+    { glyph: '✗', label: 'Remove', danger: true, disabled: live,
+      confirm: `Remove ${id} — for good?`,
+      run: async () => {
+        try {
+          await api('DELETE', '/api/guests/' + id);
+          if (S.sel === id) select(null);
+          toast('removed ' + id);
+          refresh();
+        } catch (e) { toast('remove: ' + e.message, 'fault'); }
+      } },
+  ]);
+}
+
+// long-press is the phone's right-click
+function armLongPress(el, open) {
+  let timer = null;
+  el.addEventListener('touchstart', ev => {
+    const t = ev.touches[0];
+    timer = setTimeout(() => { timer = null; open(t.clientX, t.clientY); }, 450);
+  }, { passive: true });
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchmove', cancel);
+  el.addEventListener('touchcancel', cancel);
+}
+
+function toast(text, cls) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (cls || 'info');
+  el.textContent = text;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
+function spark(el, data) {
+  if (!el || data.length < 2) return;
+  const w = el.viewBox.baseVal.width, h = el.viewBox.baseVal.height;
+  const min = Math.min(...data), max = Math.max(...data);
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w,
+    h - 2 - ((v - min) / ((max - min) || 1)) * (h - 4)]);
+  const line = pts.map(p => p.map(n => n.toFixed(1)).join(',')).join(' ');
+  const last = pts[pts.length - 1];
+  el.innerHTML = `<polygon class="sp-fill" points="0,${h} ${line} ${w},${h}"/>` +
+    `<polyline class="sp-line" points="${line}"/>` +
+    `<circle class="sp-dot" cx="${last[0]}" cy="${last[1]}" r="2"/>`;
+}
+
+// ts is null when the node has no clock yet. Render uptime (+h:mm:ss) rather
+// than a plausible-looking lie; once NTP lands the node dates the past too.
+const hhmmss = l => l.ts
+  ? new Date(l.ts * 1000).toTimeString().slice(0, 8)
+  : '+' + new Date((l.up || 0) * 1000).toISOString().slice(11, 19);
+function termLine(host, html, cls) {
+  const row = document.createElement('div');
+  row.className = 'row' + (cls ? ' ' + cls : '');
+  row.innerHTML = html;
+  host.appendChild(row);
+  while (host.childNodes.length > SCROLLBACK) host.removeChild(host.firstChild);
+  host.scrollTop = host.scrollHeight;
+}
+const consoleHTML = l =>
+  `<span class="t">${hhmmss(l)}</span><span class="lv ${
+    l.level === 'sys' ? 'sys' : l.level === 'error' ? 'err' : l.level === 'in' ? 'in' : ''
+  }">${esc(l.level)}</span>${esc(l.text)}`;
+
+// ── websocket: one socket, $sys/# always, # while the bus tab is open ──────
+function connect() {
+  const url = S.base.replace(/^http/, 'ws') + '/api/bus?token=' + encodeURIComponent(S.token);
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { return scheduleReconnect(); }
+  S.ws = ws;
+  ws.onopen = () => {
+    S.retry = 0;
+    $('#link').className = 'up';
+    ws.send(JSON.stringify({ op: 'sub', filters: currentScope() }));
+    S.scope = currentScope();
+    refresh();
+    // Learn the cluster a beat AFTER connect, not during it — the ESP32's server is
+    // already serving the shell/bus/first render at connect, and piling the cluster
+    // reads onto that storm is what resets a connection. A second later it is idle.
+    setTimeout(loadCluster, 1200);
+  };
+  ws.onmessage = ev => {
+    S.lastMsg = Date.now();
+    let frame; try { frame = JSON.parse(ev.data); } catch (e) { return; }
+    if (frame.topic !== undefined) route(frame.topic, frame.msg, frame.node);
+    else if (frame.drops !== undefined) {
+      S.drops = frame.drops;
+      const el = $('#busdrops');
+      if (el) {
+        el.hidden = false;
+        el.textContent = `⚠ ${frame.drops} dropped — this browser fell behind`;
+      }
+    }
+    else if (frame.error) toast('bus: ' + frame.error, 'fault');
+  };
+  ws.onclose = () => { $('#link').className = 'down'; scheduleReconnect(); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+}
+function scheduleReconnect() {
+  if (!S.token) return;
+  const delay = Math.min(30, 2 ** S.retry++) * 1000;
+  setTimeout(connect, delay);
+}
+function setScope(filters) {
+  // Idempotent by contract: a re-subscribe re-delivers retained messages, and
+  // retained $sys/$ui messages trigger a re-render, which calls setScope. An
+  // unconditional send here is a feedback storm that drowns the socket.
+  const same = filters.length === S.scope.length &&
+    filters.every((f, i) => f === S.scope[i]);
+  S.scope = filters;
+  if (same || !S.ws || S.ws.readyState !== 1) return;
+  S.ws.send(JSON.stringify({ op: 'sub', filters }));
+}
+function matchTopic(filter, topic) {
+  // the broker's own rules (spec §5): + is one segment, # is the tail, and a
+  // wildcard never crosses into a $-root — you subscribe to $sys by name
+  const f = filter.split('/'), t = topic.split('/');
+  if (t[0].startsWith('$') && (f[0] === '+' || f[0] === '#')) return false;
+  for (let i = 0; i < f.length; i++) {
+    if (f[i] === '#') return true;
+    if (i >= t.length || (f[i] !== '+' && f[i] !== t[i])) return false;
+  }
+  return f.length === t.length;
+}
+
+function currentScope() {
+  const filters = ['$sys/#', '$ui/#'];
+  if (S.sel === null && S.tabNode === 'bus') filters.push('#');
+  for (const t of Object.keys(S.bindWatch)) filters.push(t);
+  return filters;
+}
+
+// Staleness: the pulse is data or it is nothing.
+//
+// A node that dies does NOT close its socket. Real silicon just stops — no FIN,
+// no close frame — so the browser holds a zombie socket reporting OPEN for as
+// long as TCP takes to give up (minutes). An open-but-silent socket is not a
+// link that is up: we drive liveness from the ticks, and when they stop we
+// close the socket ourselves, which turns the light red and starts the
+// reconnect backoff that would otherwise never run. (The sim could never show
+// this: killing a process closes its socket politely.)
+setInterval(() => {
+  if (!S.token || !S.lastMsg) return;
+  const age = Date.now() - S.lastMsg;
+  const stale = age > 3500;
+  $('#app').classList.toggle('stale', stale);
+  if (!stale) return;
+  $('#stalesecs').textContent = 'last data ' + Math.round(age / 1000) + ' s ago';
+  $('#link').className = 'down';
+  if (S.ws && S.ws.readyState === 1) {
+    try { S.ws.close(); } catch (e) {}   // onclose schedules the reconnect
+  }
+}, 1000);
+
+function route(topic, msg, node) {
+  if (topic === '$sys/clock/tick') {
+    const tick = $('#tick');
+    tick.classList.add('lit');
+    clearTimeout(tick._decay);
+    tick._decay = setTimeout(() => tick.classList.remove('lit'), 220);
+    // An MCU has no clock until NTP lands, which is *after* a browser can connect
+    // to it. Read the flag off the tick, or the badge stays stuck at whatever was
+    // true the moment we logged in — which is exactly the kind of stale truth this
+    // interface refuses everywhere else.
+    if (msg && msg.synced !== undefined && msg.synced !== S.clockOk) {
+      S.clockOk = msg.synced;
+      $('#clockchip').hidden = msg.synced;
+      if (msg.synced) refresh();   // re-date the past, now that the node can
+    }
+    renderMastGauges();
+  } else if (topic === '$sys/heap' && msg) {
+    S.heap.push(msg.free / 1048576);
+    if (S.heap.length > 40) S.heap.shift();
+    renderMastGauges();
+    const g = $('#sum-heap'); if (g) g.firstChild.textContent = S.heap[S.heap.length - 1].toFixed(2);
+    spark($('#sp-heap'), S.heap); spark($('#sp-heap2'), S.heap);
+  } else if (topic === '$sys/temp' && msg) {
+    S.temp = msg.c;
+    const el = $('#sum-temp');
+    if (el) el.firstChild.textContent = msg.c;
+  } else if (topic.startsWith('$ui/')) {
+    const parts = topic.split('/');
+    if (parts[2] === 'panel') {
+      if (msg) S.panels[parts[1]] = msg; else delete S.panels[parts[1]];
+      if ((S.sel === null && S.tabNode === 'dashboard') ||
+          (S.sel === parts[1] && S.tabGuest === 'overview')) renderMain();
+    }
+  } else if (topic.startsWith('$sys/guest/')) {
+    const id = topic.split('/')[2];
+    if (msg && S.guests[id]) {
+      S.guests[id].state = msg.state;
+      renderTree(); renderMastGauges();
+      if (S.sel === id && S.tabGuest === 'overview') renderMain();
+      if (S.sel === null && S.tabNode === 'summary') renderMain();
+    } else if (msg) {
+      refresh();  // a guest we don't know — reconcile
+    }
+  }
+  if (S.bindWatch[topic]) {
+    S.bindState[topic] = msg;
+    for (const reg of S.liveWidgets)
+      if (reg.topic === topic) applyWidget(reg, resolve(msg, reg.w.path));
+  }
+  // the shell's `sub` rides the socket the UI already holds — no second connection
+  for (const wch of S.watchers) {
+    if (matchTopic(wch.filter, topic)) wch.onMsg(topic, msg);
+  }
+  const bus = $('#busterm');
+  if (bus && !S.busPaused) {
+    const ui = msg && typeof msg === 'object' && msg.origin === 'ui';
+    // node is set when a message was bridged in from a peer (one §4) — show which
+    // board it crossed from, so the one bus visibly spans the cluster.
+    const from = node ? `<span class="from">↯${esc(node)}</span>` : '';
+    termLine(bus, `<span class="t">${new Date().toTimeString().slice(0, 8)}</span>` +
+      `<span class="topic">${ui ? '▸ ' : ''}${esc(topic)}</span>${from}${esc(JSON.stringify(msg))}`,
+      ui ? 'uiline' : '');
+  }
+}
+
+// ── data ────────────────────────────────────────────────────────────────────
+async function refresh() {
+  try {
+    S.node = await api('GET', '/api/node');
+    S.nodeAt = Date.now();
+    const list = await api('GET', '/api/guests');
+    const before = Object.keys(S.guests).sort().join(',');
+    const selBefore = S.sel && S.guests[S.sel] && S.guests[S.sel].state;
+    S.guests = {};
+    for (const g of list) S.guests[g.id] = g;
+    // Rebuilding the content pane destroys whatever is stateful inside it — a
+    // shell transcript, a scrollback, a half-typed line. So only rebuild when
+    // something structural actually changed. A repaint that erases what you are
+    // typing into is not a repaint; it is a bug with a refresh rate.
+    const structural =
+      before !== Object.keys(S.guests).sort().join(',') ||
+      (S.sel && (!S.guests[S.sel] || S.guests[S.sel].state !== selBefore));
+    document.title = 'jorm · ' + S.node.hostname;
+    $('#hostchip').textContent = S.node.hostname;
+    S.clockOk = !S.node.clock || S.node.clock.synced;
+    $('#clockchip').hidden = S.clockOk;
+    measureMast();
+    $('#mastg').hidden = false;
+    renderTree();
+    renderMastGauges();
+    if (structural || !$('#main').firstChild) renderMain();
+  } catch (e) {
+    if (e.message !== 'unauthorized') toast('refresh: ' + e.message, 'fault');
+  }
+}
+
+// ── cluster (one §1: the tree spans every node, managed from any one) ────────
+// The UI you are looking at is served by one node but the cluster is all of them.
+// A peer is read cross-origin (CORS + the shared token); if it does not answer it
+// shows as unreachable rather than vanishing. Clicking a peer HOPS the whole UI to
+// it — every node is the front door, so "manage that node" means "become its UI".
+async function peerGet(url, path) {
+  const r = await fetch(url + path, { headers: { Authorization: 'Bearer ' + S.token } });
+  if (!r.ok) throw new Error(r.status + '');
+  return r.json();
+}
+
+async function loadCluster() {
+  if (!S.token || !S.base) return;
+  let c;
+  try { c = await api('GET', '/api/cluster'); } catch (e) { return; }
+  S.clusterName = c.cluster;
+  const peers = await Promise.all((c.peers || []).map(async p => {
+    try {
+      const [node, guests] = await Promise.all([
+        peerGet(p.url, '/api/node'), peerGet(p.url, '/api/guests')]);
+      return { url: p.url, name: node.hostname, board: node.board,
+               rssi: p.rssi, seed: p.seed, guests, reachable: true };
+    } catch (e) {
+      // Seeded-but-silent, or just rebooting: keep it in the tree, marked down.
+      return { url: p.url, name: p.name, board: p.board, rssi: p.rssi,
+               seed: p.seed, guests: [], reachable: false };
+    }
+  }));
+  S.peers = peers;
+  renderTree();
+}
+
+async function hop(url) {
+  if (!url || url === S.base) return;
+  toast('opening ' + url.replace(/^https?:\/\//, '') + '…');
+  try {
+    // Mint a one-time ticket on the peer (cross-origin, the shared cluster token),
+    // then navigate carrying it in the fragment — never the token itself. Same
+    // contract as `jorm open`: the credential in the URL is worthless in a minute.
+    const r = await fetch(url + '/api/auth/ticket',
+      { method: 'POST', headers: { Authorization: 'Bearer ' + S.token } });
+    if (r.ok) { location.href = url + '/#t=' + (await r.json()).ticket; return; }
+  } catch (e) { /* fall through */ }
+  location.href = url + '/';   // no ticket: the peer will ask for the token once
+}
+
+const GLYPH = { running: ['●', 'go'], stopped: ['○', 'off'], crashed: ['✗', 'fault'],
+  unresponsive: ['⚠', 'caution'], starting: ['◌', 'caution'], stopping: ['◌', 'caution'] };
+const BADGE = { running: 'go', stopped: 'off', crashed: 'fault',
+  unresponsive: 'caution', starting: 'caution', stopping: 'caution' };
+
+// ── render ──────────────────────────────────────────────────────────────────
+function renderMastGauges() {
+  if (!S.node) return;
+  if (S.heap.length) $('#heapval').textContent = S.heap[S.heap.length - 1].toFixed(2) + 'M';
+  const up = S.node.uptime_ms + (Date.now() - S.nodeAt);
+  const h = Math.floor(up / 3600000), m = Math.floor(up / 60000) % 60, s = Math.floor(up / 1000) % 60;
+  $('#upval').textContent = (h ? h + ':' : '') +
+    String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  const ids = Object.keys(S.guests);
+  $('#gval').textContent =
+    ids.filter(id => S.guests[id].state === 'running').length + '/' + ids.length;
+}
+
+function renderTree() {
+  // Proxmox shape: Datacenter → node → guests, each level collapsible. Zero has
+  // exactly one node; the markup is the cluster's from day one, because the v1
+  // story (mDNS discovery, migration) adds nodes here and nothing else changes.
+  const ids = Object.keys(S.guests).sort((a, b) =>
+    (S.guests[a].num || 0) - (S.guests[b].num || 0) || a.localeCompare(b));
+  const running = ids.filter(id => S.guests[id].state === 'running').length;
+  const rows = [];
+
+  const cluster = (S.node && S.node.cluster) || 'Cluster';
+  rows.push(S.renaming
+    ? `<input class="trename" id="clustername" value="${esc(cluster)}" maxlength="32">`
+    : `<button class="trow root" data-tw="dc" data-root="1">` +
+      `<span class="tw">${S.open.dc ? '▾' : '▸'}</span><span class="st info">▣</span>` +
+      `${esc(cluster)}</button>`);
+
+  if (S.open.dc) {
+    rows.push(`<button class="trow grp${S.sel === null ? ' sel' : ''}" data-id="" data-tw="node">` +
+      `<span class="tw">${S.open.node ? '▾' : '▸'}</span>` +
+      `<span class="st go">◉</span>${esc(S.node ? S.node.hostname : '…')}` +
+      `<span class="note" style="margin-left:auto">${running}/${ids.length}</span></button>`);
+
+    if (S.open.node) {
+      for (const id of ids) {
+        const g = S.guests[id];
+        const [gl, cls] = GLYPH[g.state] || ['?', 'off'];
+        rows.push(`<button class="trow g${S.sel === id ? ' sel' : ''}" data-id="${esc(id)}">` +
+          `<span class="st ${cls}">${gl}</span>` +
+          `<span class="tnum">${g.num || '—'}</span>(${esc(id)})` +
+          (g.suspected ? ' <span class="st fault" title="suspected in a watchdog reset">⚠</span>' : '') +
+          `</button>`);
+      }
+      if (!ids.length)
+        rows.push(`<div class="note" style="padding:.3rem 2.1rem">no guests installed</div>`);
+    }
+
+    // The rest of the cluster: each peer is a node branch you can open to see its
+    // guests, and click to hop into. Read-only here — you manage a node by becoming
+    // its front door, not by reaching across.
+    for (const peer of S.peers) {
+      const okey = 'peer:' + peer.url;
+      const open = !!S.open[okey];
+      const run = peer.guests.filter(g => g.state === 'running').length;
+      const dot = peer.reachable ? 'go' : 'fault';
+      const mark = peer.reachable ? '◉' : '⚠';
+      rows.push(`<button class="trow grp" data-hop="${esc(peer.url)}" data-tw="${esc(okey)}">` +
+        `<span class="tw">${peer.guests.length ? (open ? '▾' : '▸') : '·'}</span>` +
+        `<span class="st ${dot}">${mark}</span>${esc(peer.name)}` +
+        (peer.seed ? '<span class="note" style="margin-left:.3rem">seed</span>' : '') +
+        `<span class="note" style="margin-left:auto">` +
+        (peer.reachable ? `${run}/${peer.guests.length}` : 'unreachable') +
+        `</span></button>`);
+      if (open) {
+        for (const g of peer.guests.sort((a, b) => (a.num || 0) - (b.num || 0))) {
+          const [gl, cls] = GLYPH[g.state] || ['?', 'off'];
+          rows.push(`<button class="trow g" data-hop="${esc(peer.url)}">` +
+            `<span class="st ${cls}">${gl}</span>` +
+            `<span class="tnum">${g.num || '—'}</span>(${esc(g.id)})</button>`);
+        }
+      }
+    }
+  }
+  $('#tree').innerHTML = rows.join('');
+
+  const field = $('#clustername');
+  if (field) {
+    field.focus();
+    field.select();
+    const done = async commit => {
+      const name = field.value.trim();
+      S.renaming = false;
+      if (commit && name && name !== cluster) {
+        try {
+          const got = await api('PUT', '/api/node/cluster', { name });
+          S.node.cluster = got.cluster;
+          toast('cluster is now "' + got.cluster + '"');
+        } catch (e) { toast('rename: ' + e.message, 'fault'); }
+      }
+      renderTree();
+    };
+    field.onkeydown = ev => {
+      if (ev.key === 'Enter') done(true);
+      if (ev.key === 'Escape') done(false);
+    };
+    field.onblur = () => done(true);
+  }
+
+  $('#tree').querySelectorAll('.trow').forEach(row => {
+    const tw = row.dataset.tw;
+    const id = row.dataset.id;
+    const hopUrl = row.dataset.hop;
+    const menu = row.dataset.root ? clusterMenu
+      : (id ? (x, y) => guestMenu(x, y, id) : (id === '' ? nodeMenu : null));
+
+    row.onclick = ev => {
+      // clicking the twisty folds; clicking the row selects, or hops to a peer
+      if (tw && ev.target.classList.contains('tw')) {
+        S.open[tw] = !S.open[tw];
+        renderTree();
+        return;
+      }
+      if (hopUrl) { hop(hopUrl); return; }
+      if (id !== undefined) select(id || null);
+    };
+    if (menu) {
+      row.oncontextmenu = ev => { ev.preventDefault(); menu(ev.clientX, ev.clientY); };
+      armLongPress(row, menu);
+    }
+  });
+}
+
+function select(id) {
+  teardown();
+  S.sel = id;
+  closeMenu();
+  drawer(false);   // on a phone: navigate, then read
+  renderTree(); renderMain();
+}
+function setTab(tab) {
+  teardown();
+  if (S.sel === null) S.tabNode = tab; else S.tabGuest = tab;
+  renderMain();
+}
+function teardown() {
+  if (S.conWS) { try { S.conWS.close(); } catch (e) {} S.conWS = null; }
+  if (S.logTimer) { clearInterval(S.logTimer); S.logTimer = null; }
+  if (shellDispose) { try { shellDispose(); } catch (e) {} shellDispose = null; }
+}
+
+function tabsHTML(tabs, active) {
+  return '<div class="tabs">' + tabs.map(t =>
+    `<button class="tab${t === active ? ' on' : ''}" data-tab="${t}">${t}</button>`).join('') + '</div>';
+}
+
+function renderMain() {
+  const main = $('#main');
+  S.liveWidgets = [];
+  S.bindWatch = {};
+  if (S.sel === null) renderNode(main); else renderGuest(main, S.sel);
+  main.querySelectorAll('.tab').forEach(tab => tab.onclick = () => setTab(tab.dataset.tab));
+  main.querySelectorAll('[data-panel]').forEach(el => wirePanel(el.dataset.panel));
+  setScope(currentScope());
+}
+
+function renderNode(main) {
+  const tab = S.tabNode;
+  let body = '';
+  if (tab === 'summary' && S.node) {
+    const n = S.node;
+    const rows = Object.keys(S.guests).sort().map(id => {
+      const g = S.guests[id];
+      return `<tr><td>${esc(id)}</td><td><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span>` +
+        (g.suspected ? ' <span class="badge caution">suspected</span>' : '') +
+        `</td><td class="note">${esc(g.status || '—')}</td></tr>`;
+    }).join('');
+    body = `<div class="grid">
+      <div class="readout" style="grid-column:1/-1">
+        <div class="readout-top"><span>Node readout · ${esc(n.hostname)}</span><span>uplink ◉</span></div>
+        <div class="readout-bd">
+          <div class="gauge go"><div class="glbl">Heap free</div>
+            <div class="gval" id="sum-heap">${S.heap.length ? S.heap[S.heap.length - 1].toFixed(2) : '—'}<span class="unit">MB</span></div>
+            <svg class="spark" id="sp-heap2" width="110" height="26" viewBox="0 0 110 26"></svg></div>
+          <div class="gauge"><div class="glbl">Alloc</div>
+            <div class="gval">${(n.heap_alloc / 1024).toFixed(0)}<span class="unit">KB</span></div></div>
+          <div class="gauge go"><div class="glbl">Running</div>
+            <div class="gval">${Object.values(S.guests).filter(g => g.state === 'running').length}<span class="unit">/${Object.keys(S.guests).length}</span></div></div>
+          <div class="gauge${S.temp > 70 ? ' caution' : ''}"><div class="glbl">MCU temp</div>
+            <div class="gval" id="sum-temp">${S.temp == null ? '—' : S.temp}<span class="unit">°C</span></div></div>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-hd"><span><span class="dot"></span>Node</span><span>${esc(n.profile)}</span></div>
+        <div class="panel-bd"><dl class="kv">
+          <dt>board</dt><dd>${esc(n.board)}</dd>
+          <dt>profile</dt><dd>${esc(n.profile)} · spec ${n.spec}</dd>
+          <dt>version</dt><dd>${esc(n.version)}</dd>
+          <dt>ip</dt><dd>${esc(n.ip || '—')}</dd>
+          <dt>runtimes</dt><dd>${esc((n.runtimes || []).join(' · '))}</dd>
+          <dt>clock</dt><dd>${n.clock && n.clock.synced
+            ? esc(n.clock.source || 'ntp') + ' · ' + new Date(n.clock.last_sync * 1000).toLocaleString()
+            : '<span style="color:var(--au-warn)">⚠ unsynced — timestamps are uptime</span>'}</dd>
+        </dl></div></div>
+      <div class="panel"><div class="panel-hd"><span>Guests</span><span>${Object.keys(S.guests).length} installed</span></div>
+        <div class="panel-bd"><table class="cl">
+          <tr><th>id</th><th>state</th><th>status</th></tr>${rows}</table></div></div>
+    </div>`;
+  } else if (tab === 'dashboard') {
+    const ids = Object.keys(S.panels).sort();
+    body = ids.length
+      ? '<div class="grid">' + ids.map(panelBlock).join('') + '</div>'
+      : '<p class="note">no guest has declared a panel — hal.ui.panel(widgets) puts one here (spec §7)</p>';
+  } else if (tab === 'bus') {
+    body = `<div class="busbar">
+        <span class="badge info">sub #</span>
+        <button class="btn secondary" id="pausebtn">${S.busPaused ? '▶ resume' : '⏸ pause'}</button>
+        <span class="note">ring ${SCROLLBACK} · ▸ orange = origin: ui</span>
+        <span class="badge caution" id="busdrops" ${S.drops ? '' : 'hidden'}
+          >⚠ ${S.drops || 0} dropped — this browser fell behind</span>
+        <span style="flex:1"></span>
+        <input id="pubtopic" placeholder="topic" size="18">
+        <input id="pubmsg" placeholder="msg (JSON)" size="16">
+        <label class="note"><input type="checkbox" id="pubretain"> retain</label>
+        <button class="btn primary" id="pubbtn">pub</button>
+      </div>
+      <div class="term" id="busterm"></div>`;
+  } else if (tab === 'shell') {
+    // A real terminal (@gcu/term), fetched from the node's own flash on first
+    // open. The main UI stays ~21 KB gzipped; this costs 43 KB more, once,
+    // cached — so a phone loading the dashboard never pays for a terminal it did
+    // not ask for. Still not a Unix: the verbs are jorm's, the filesystem is the
+    // API. geas is the next surface and binds to the same API.
+    body = `<div id="shellhost"><p class="note">loading the terminal…</p></div>`;
+  } else if (tab === 'claims') {
+    body = `<div class="panel"><div class="panel-hd"><span>Claims table</span><span>who owns what</span></div>
+      <div class="panel-bd" id="claimsbody"><span class="note">loading…</span></div></div>`;
+  } else if (tab === 'log') {
+    body = `<div class="term" id="logterm"></div>`;
+  }
+  main.innerHTML = tabsHTML(['summary', 'dashboard', 'shell', 'bus', 'claims', 'log'], tab) + body;
+
+  if (tab === 'summary') spark($('#sp-heap2'), S.heap);
+  if (tab === 'bus') {
+    $('#pausebtn').onclick = () => { S.busPaused = !S.busPaused;
+      $('#pausebtn').textContent = S.busPaused ? '▶ resume' : '⏸ pause'; };
+    $('#pubbtn').onclick = async () => {
+      let msg = $('#pubmsg').value;
+      try { msg = JSON.parse(msg); } catch (e) {}
+      try {
+        await api('POST', '/api/bus/publish',
+          { topic: $('#pubtopic').value, msg, retain: $('#pubretain').checked });
+      } catch (e) { toast('publish: ' + e.message, 'fault'); }
+    };
+  }
+  if (tab === 'shell') openShell();   // lazily imports the terminal
+  if (tab === 'claims') loadClaims();
+  if (tab === 'log') {
+    loadLog();
+    S.logTimer = setInterval(loadLog, 5000);
+  }
+}
+
+// ── the node shell: a real terminal, fetched on demand ────────────────────
+//
+// The bundle (@gcu/term + the shell) lives in the node's own flash and is
+// fetched the first time you open this tab. That is the whole reason it is lazy:
+// the dashboard on a phone should not carry a terminal emulator it will never
+// use, and the node has 13 MB of flash but only ~90 KB/s of wire.
+let shellDispose = null;
+
+async function openShell(attempt) {
+  const host = $('#shellhost');
+  if (!host) return;
+  attempt = attempt || 1;
+  // geas.js alone is ~196 KB gzipped, so the first open spends a second on the
+  // wire. Say so, rather than leaving the pane blank and looking hung.
+  host.innerHTML = '<p class="note">loading the terminal…</p>';
+  try {
+    // On a retry, bust the module cache — a browser can hold a failed fetch, and a
+    // node that was mid-reboot a moment ago will answer cleanly now. The query is
+    // dropped when the sub-imports (./term.js &c.) resolve, so only shell.js is
+    // re-fetched, not the whole graph.
+    const url = '/web/shell.js' + (attempt > 1 ? '?r=' + Date.now() : '');
+    const { mountShell } = await import(url);
+    shellDispose = mountShell(host, {
+      api,
+      state: S,
+      refresh,
+      toast,
+      // a live bus tap for `sub`, over the socket the UI already holds open
+      watch: (filter, onMsg) => {
+        const reg = { filter, onMsg };
+        S.watchers.push(reg);
+        S.bindWatch[filter] = 1;
+        setScope(currentScope());
+        return () => {
+          S.watchers = S.watchers.filter(x => x !== reg);
+          delete S.bindWatch[filter];
+          setScope(currentScope());
+        };
+      },
+    });
+  } catch (e) {
+    // The assets are public and cached hard, so a failure here is almost never a
+    // missing file — it is the node dropping a connection under load (the ESP32's
+    // server juggles the shell's four parallel module fetches, the bus socket, and
+    // the poll loop at once) or mid-reboot. Both clear on a retry, so retry a few
+    // times automatically before bothering the reader; only a persistent failure
+    // gets the manual button.
+    if (attempt < 4) {
+      host.innerHTML = `<p class="note">loading the terminal… (retry ${attempt})</p>`;
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      return openShell(attempt + 1);
+    }
+    host.innerHTML = `<div class="note" style="color:var(--au-error)">
+      <p>the terminal did not load — the node may have been busy or rebooting.</p>
+      <p style="font-family:var(--sw-mono);color:var(--au-fg-soft)">${esc(e.message)}</p>
+      <p><button class="btn" id="shell-retry">try again</button></p></div>`;
+    const b = $('#shell-retry');
+    if (b) b.onclick = () => openShell(1);
+  }
+}
+
+async function loadClaims() {
+  try {
+    const t = await api('GET', '/api/claims');
+    const host = $('#claimsbody'); if (!host) return;
+    const rows = t.pins.map(p =>
+      `<tr><td>pin ${p.pin}</td><td>${esc(p.mode)}</td><td>${esc(p.owners.join(' · '))}</td>` +
+      `<td>${p.mode === 'in-shared' ? `<span class="note">${p.owners.length} watcher${p.owners.length > 1 ? 's' : ''}</span>` : ''}</td></tr>`);
+    host.innerHTML = (t.reserved_pins && t.reserved_pins.length
+        ? `<p class="note" style="margin:0 0 .5rem">reserved by the supervisor: pin ${t.reserved_pins.join(', ')}</p>` : '') +
+      (rows.length
+        ? `<table class="cl"><tr><th>resource</th><th>mode</th><th>owner</th><th></th></tr>${rows.join('')}</table>`
+        : '<span class="note">nothing passed through — the table is empty</span>');
+  } catch (e) { toast('claims: ' + e.message, 'fault'); }
+}
+
+async function loadLog() {
+  try {
+    const got = await api('GET', '/api/node/log?n=' + SCROLLBACK);
+    const host = $('#logterm'); if (!host) return;
+    host.innerHTML = '';
+    for (const l of got.lines) termLine(host, consoleHTML(l));
+  } catch (e) { toast('log: ' + e.message, 'fault'); }
+}
+
+function renderGuest(main, id) {
+  const g = S.guests[id];
+  if (!g) { S.sel = null; return renderNode(main); }
+  const tab = S.tabGuest;
+  let body = '';
+  if (tab === 'overview') {
+    body = `<div class="grid">
+      <div class="panel">
+        <div class="panel-hd"><span><span class="dot" style="background:var(--au-${
+          {go:'success',fault:'error',caution:'warn'}[BADGE[g.state]] || 'fg-soft'})">
+          </span>${g.num || '—'} (${esc(id)})</span><span>${esc(g.name || id)}</span></div>
+        <div class="panel-bd">
+          <p style="margin:.1rem 0 .6rem"><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span>
+            ${g.suspected ? '<span class="badge caution">⚠ suspected — WDT</span>' : ''}
+            <span class="note" style="margin-left:.5rem">${esc(g.status || '')}</span></p>
+          <dl class="kv" id="gkv"><dt>caps</dt><dd>${esc((g.caps || []).join(' · ') || 'none')}</dd>
+            <dt>restart</dt><dd>${esc(g.restart)}</dd>
+            <dt>autostart</dt><dd>${g.autostart ? '✓' : '—'}</dd>
+            <dt>memory</dt><dd style="display:flex;align-items:center;gap:.5rem">
+              <svg class="spark" id="gmem" width="90" height="20" viewBox="0 0 90 20"></svg>
+              <span class="note" id="gmemlbl">sampled</span></dd></dl>
+          <div id="gdetail"></div>
+          <p style="margin:.8rem 0 0; display:flex; gap:.5rem" id="gbtns">
+            <button class="btn primary" data-act="start" ${g.state === 'running' || g.state === 'unresponsive' ? 'disabled' : ''}>▶ start</button>
+            <button class="btn secondary" data-act="stop" ${g.state !== 'running' && g.state !== 'unresponsive' ? 'disabled' : ''}>■ stop</button>
+            <button class="btn secondary" data-act="restart">↻ restart</button>
+          </p>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-hd"><span>Claims &amp; bus</span></div>
+        <div class="panel-bd" id="gclaims"><span class="note">loading…</span></div></div>
+      ${S.panels[id] ? '<div style="grid-column:1/-1">' + panelBlock(id) + '</div>' : ''}
+    </div>`;
+  } else if (tab === 'config') {
+    body = `<div class="panel" style="max-width:36rem">
+      <div class="panel-hd"><span>Configuration</span><span>editable while stopped, too</span></div>
+      <div class="panel-bd" id="cfgbody"><span class="note">loading…</span></div></div>`;
+  } else if (tab === 'files') {
+    body = `<div class="filebar" id="filebar"><span class="note">loading…</span></div>
+      <textarea id="editor" spellcheck="false" autocomplete="off"
+        placeholder="pick a file"></textarea>
+      <p style="margin:.5rem 0 0; display:flex; gap:.5rem; align-items:center">
+        <button class="btn primary" id="fsave" disabled>save</button>
+        <button class="btn secondary" id="fsaverun" disabled>save &amp; restart</button>
+        <span class="note" id="fnote"></span>
+      </p>`;
+  } else if (tab === 'console') {
+    // A console is bidirectional or it is a log with extra steps. If the guest
+    // never called hal.console.input() we say so, rather than offering a box
+    // that quietly swallows whatever you type into it.
+    const deaf = !g.reads_input;
+    const live = g.state === 'running';
+    body = `<div class="term" id="conterm"></div>
+      <div class="cline${deaf || !live ? ' deaf' : ''}">
+        <span class="prompt">▸</span>
+        <input id="conin" ${deaf || !live ? 'disabled' : ''} autocomplete="off"
+          placeholder="${deaf ? 'this guest reads no input (it never called hal.console.input())'
+            : !live ? 'the guest is not running — nothing is listening'
+            : 'type a line and press Enter'}">
+      </div>
+      <p class="note" style="margin:.4rem 0 0">live over WS · {ts, level, text} · ring 200 node-side, ${SCROLLBACK} here</p>`;
+  }
+  main.innerHTML = tabsHTML(['overview', 'console', 'config', 'files'], tab) + body;
+
+  if (tab === 'overview') {
+    main.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => act(id, btn.dataset.act, btn));
+    const hd = main.querySelector('.panel-hd');
+    if (hd) {
+      hd.oncontextmenu = ev => { ev.preventDefault(); guestMenu(ev.clientX, ev.clientY, id); };
+      armLongPress(hd, (x, y) => guestMenu(x, y, id));
+    }
+    loadGuestDetail(id);
+  }
+  if (tab === 'console') {
+    openConsole(id);
+    const line = $('#conin');
+    if (line && !line.disabled) {
+      line.focus();
+      line.onkeydown = async ev => {
+        if (ev.key !== 'Enter' || !line.value) return;
+        const text = line.value;
+        line.value = '';
+        try { await api('POST', `/api/guests/${id}/console`, { line: text }); }
+        catch (e) { toast('console: ' + e.message, 'fault'); }
+      };
+    }
+  }
+  if (tab === 'config') loadConfig(id);
+  if (tab === 'files') loadFiles(id);
+}
+
+async function loadConfig(id) {
+  const host = $('#cfgbody');
+  let got;
+  try { got = await api('GET', '/api/guests/' + id + '/config'); }
+  catch (e) { host.innerHTML = '<span class="note">config: ' + esc(e.message) + '</span>'; return; }
+  if (!got.schema) {
+    host.innerHTML = '<span class="note">no config schema declared — hal.ui.config(fields) puts a form here</span>';
+    return;
+  }
+  host.innerHTML = got.schema.map(f => {
+    const val = got.values[f.key];
+    const pending = got.pending_restart.includes(f.key);
+    const chips = (f.live ? ' <span class="badge info">live</span>' : '') +
+      (pending ? ' <span class="badge caution">⚠ pending restart</span>' : '');
+    let ctl = '';
+    if (f.w === 'slider') {
+      ctl = `<div style="display:flex;gap:.6rem;align-items:center">
+        <input type="range" data-key="${esc(f.key)}" data-w="slider" min="${f.min}" max="${f.max}"
+          step="${f.step || 1}" value="${val}"
+          oninput="this.nextElementSibling.textContent = this.value + ' ${esc(f.unit || '')}'">
+        <span class="note" style="min-width:5.5em">${val} ${esc(f.unit || '')}</span></div>`;
+    } else if (f.w === 'toggle') {
+      ctl = `<label class="note"><input type="checkbox" data-key="${esc(f.key)}" data-w="toggle"
+        ${val ? 'checked' : ''}> ${val ? 'on' : 'off'}</label>`;
+    } else if (f.w === 'select') {
+      ctl = `<select class="wsel" data-key="${esc(f.key)}" data-w="select">` +
+        (f.options || []).map(o => `<option${o === val ? ' selected' : ''}>${esc(o)}</option>`).join('') +
+        '</select>';
+    } else {
+      ctl = `<input class="wsel" data-key="${esc(f.key)}" data-w="text" value="${esc(val ?? '')}">`;
+    }
+    return `<div class="field"><label>${esc(f.label || f.key)}${chips}</label>${ctl}</div>`;
+  }).join('') +
+  (got.undeclared.length
+    ? `<p class="note">⚠ in the store but no longer declared: ${got.undeclared.map(esc).join(', ')}</p>` : '') +
+  '<p style="margin:.4rem 0 0"><button class="btn primary" id="cfgsave">save</button></p>';
+  $('#cfgsave').onclick = async () => {
+    const updates = {};
+    host.querySelectorAll('[data-key]').forEach(el => {
+      const w = el.dataset.w;
+      updates[el.dataset.key] = w === 'slider' ? Number(el.value)
+        : w === 'toggle' ? el.checked : el.value;
+    });
+    try {
+      const res = await api('PUT', '/api/guests/' + id + '/config', updates);
+      toast('config saved' +
+        (res.applied_live.length ? ' · live: ' + res.applied_live.join(', ') : '') +
+        (res.pending_restart.length ? ' · pending restart: ' + res.pending_restart.join(', ') : ''),
+        res.pending_restart.length ? 'fault' : 'info');
+      loadConfig(id);
+    } catch (e) { toast('config: ' + e.message, 'fault'); }
+  };
+}
+
+// ── the file editor ───────────────────────────────────────────────────────
+// A guest's source, on the node, editable in place. ed can do this too (it is in
+// geas, and it works) — but ed is right in a terminal and wrong for everyday
+// editing, and this is where most people will actually change a line and restart.
+async function loadFiles(id) {
+  const bar = $('#filebar'), ed = $('#editor'), note = $('#fnote');
+  let names;
+  try {
+    const r = await api('GET', '/api/fs/guests/' + id);
+    names = r.entries.filter(e => !e.dir && !e.name.startsWith('.')).map(e => e.name);
+  } catch (e) {
+    bar.innerHTML = `<span class="note" style="color:var(--au-error)">files: ${esc(e.message)}</span>`;
+    return;
+  }
+  let current = null;
+
+  const open = async name => {
+    current = name;
+    bar.querySelectorAll('.fbtn').forEach(b =>
+      b.classList.toggle('on', b.dataset.name === name));
+    ed.value = 'loading…';
+    ed.readOnly = true;
+    try {
+      ed.value = await api('GET', `/api/fs/guests/${id}/${name}`, undefined, 'raw');
+      ed.readOnly = false;
+      $('#fsave').disabled = $('#fsaverun').disabled = false;
+      const g = S.guests[id];
+      note.textContent = (g && g.state === 'running')
+        ? 'the guest is running — a save takes effect on its next restart'
+        : `${ed.value.length} bytes`;
+    } catch (e) {
+      ed.value = '';
+      note.textContent = 'could not read ' + name + ': ' + e.message;
+    }
+  };
+
+  bar.innerHTML = names.map(n =>
+    `<button class="fbtn" data-name="${esc(n)}">${esc(n)}</button>`).join('');
+  bar.querySelectorAll('.fbtn').forEach(b => b.onclick = () => open(b.dataset.name));
+
+  const save = async () => {
+    if (!current) return;
+    try {
+      await api('PUT', `/api/fs/guests/${id}/${current}`, ed.value, 'raw');
+      toast(`saved ${current} (${ed.value.length} B)`);
+      note.textContent = 'saved · restart the guest for it to take effect';
+      return true;
+    } catch (e) {
+      toast('save: ' + e.message, 'fault');
+      return false;
+    }
+  };
+  $('#fsave').onclick = save;
+  $('#fsaverun').onclick = async () => {
+    if (!await save()) return;
+    try {
+      await api('POST', `/api/guests/${id}/restart`);
+      toast(`${id} restarted with the new source`);
+    } catch (e) { toast('restart: ' + e.message, 'fault'); }
+  };
+
+  if (names.includes('main.py')) open('main.py');
+  else if (names.length) open(names[0]);
+}
+
+// ── declarative panels (spec §7): the supervisor's file renders, guests declare
+function resolve(msg, path) {
+  if (path == null) return msg;
+  let v = msg;
+  for (const seg of String(path).split('.')) v = v == null ? v : v[seg];
+  return v;
+}
+
+function panelBlock(gid) {
+  const decl = S.panels[gid];
+  if (!decl || !decl.widgets) return '';
+  const g = S.guests[gid];
+  const stale = !g || g.state !== 'running';
+  const cells = decl.widgets.map((w, i) => {
+    const wid = `w-${gid}-${i}`;
+    const span = w.size === 'l' ? ' style="grid-column:1/-1"' : '';
+    const label = esc(w.label || w.id);
+    let inner = '';
+    if (w.w === 'value' || w.w === 'gauge') {
+      inner = `<div class="gval"><span id="${wid}">—</span>` +
+        (w.unit ? `<span class="unit">${esc(w.unit)}</span>` : '') + '</div>' +
+        (w.w === 'gauge' ? `<div class="gbar"><i id="${wid}-bar"></i></div>` : '') +
+        (w.spark ? `<svg class="spark" id="${wid}-sp" width="90" height="20" viewBox="0 0 90 20"></svg>` : '');
+    } else if (w.w === 'indicator') {
+      inner = `<div class="wind" id="${wid}"><span class="st off">○</span> —</div>`;
+    } else if (w.w === 'text') {
+      inner = `<div class="wtext" id="${wid}">—</div>`;
+    } else if (w.w === 'button') {
+      inner = `<button class="btn secondary" id="${wid}">${label}</button>`;
+    } else if (w.w === 'toggle') {
+      inner = `<button class="btn secondary" id="${wid}" data-on="0">—</button>`;
+    } else if (w.w === 'slider') {
+      inner = `<input type="range" id="${wid}" min="${w.min}" max="${w.max}" step="${w.step || 1}">` +
+        `<span class="note" id="${wid}-lbl">—</span>`;
+    } else if (w.w === 'select') {
+      inner = `<select class="wsel" id="${wid}">` +
+        (w.options || []).map(o => `<option>${esc(o)}</option>`).join('') + '</select>';
+    }
+    return `<div class="gauge"${span}><div class="glbl">${label}</div>${inner}</div>`;
+  }).join('');
+  return `<div class="readout pblock${stale ? ' stale-p' : ''}" data-panel="${esc(gid)}">
+    <div class="readout-top"><span>Panel · ${esc(gid)}</span>
+      <span>${stale ? 'frozen — guest ' + esc(g ? g.state : 'removed') : '◉ live'}</span></div>
+    <div class="readout-bd">${cells}</div></div>`;
+}
+
+function wirePanel(gid) {
+  const decl = S.panels[gid];
+  if (!decl || !decl.widgets) return;
+  decl.widgets.forEach((w, i) => {
+    const el = document.getElementById(`w-${gid}-${i}`);
+    if (!el) return;
+    const reg = { topic: w.bind, w, el, hist: [] };
+    if (w.bind) {
+      S.liveWidgets.push(reg);
+      S.bindWatch[w.bind] = 1;
+      if (S.bindState[w.bind] !== undefined)
+        applyWidget(reg, resolve(S.bindState[w.bind], w.path));
+    }
+    if (w.set) {
+      const pub = value => api('POST', '/api/bus/publish',
+        { topic: w.set, msg: (value && typeof value === 'object')
+            ? Object.assign({ origin: 'ui' }, value)
+            : { value, origin: 'ui' } })
+        .catch(e => toast(w.set + ': ' + e.message, 'fault'));
+      if (w.w === 'button') el.onclick = () => {
+        if (w.confirm && el.dataset.armed !== '1') {
+          el.dataset.armed = '1';
+          el.classList.add('armed');
+          el.textContent = 'confirm?';
+          setTimeout(() => { el.dataset.armed = '0'; el.classList.remove('armed');
+            el.textContent = w.label || w.id; }, 3000);
+          return;
+        }
+        el.dataset.armed = '0'; el.classList.remove('armed');
+        el.textContent = w.label || w.id;
+        pub(w.msg === undefined ? { pressed: true } : w.msg);
+      };
+      if (w.w === 'toggle') el.onclick = () => {
+        const next = el.dataset.on !== '1';
+        applyWidget(reg, next);  // optimistic; the bind state confirms or reverts
+        pub(next);
+        setTimeout(() => { const s = resolve(S.bindState[w.bind], w.path);
+          if (s !== undefined) applyWidget(reg, s); }, 5000);
+      };
+      if (w.w === 'slider') el.onchange = () => pub(Number(el.value));
+      if (w.w === 'select') el.onchange = () => pub(el.value);
+    }
+  });
+}
+
+function applyWidget(reg, val) {
+  const { w, el } = reg;
+  if (val === undefined || el == null) return;
+  if (w.w === 'value' || w.w === 'gauge') {
+    el.textContent = typeof val === 'number' && w.fmt ? w.fmt.replace('%v', val) : String(val);
+    if (w.w === 'gauge') {
+      const bar = document.getElementById(el.id + '-bar');
+      if (bar && typeof val === 'number') {
+        const lo = w.min ?? 0, hi = w.max ?? 100;
+        bar.style.width = Math.max(0, Math.min(100, (val - lo) / (hi - lo) * 100)) + '%';
+      }
+    }
+    const sp = document.getElementById(el.id + '-sp');
+    if (sp && typeof val === 'number') {
+      reg.hist.push(val);
+      if (reg.hist.length > 40) reg.hist.shift();
+      spark(sp, reg.hist);
+    }
+  } else if (w.w === 'indicator') {
+    const on = !!val;
+    el.innerHTML = on ? '<span class="st go">●</span> ' + esc(w.on || 'on')
+                      : '<span class="st off">○</span> ' + esc(w.off || 'off');
+  } else if (w.w === 'text') {
+    if (w.lines) {
+      reg.hist.push(String(val));
+      if (reg.hist.length > w.lines) reg.hist.shift();
+      el.textContent = reg.hist.join('\n');
+    } else el.textContent = String(val);
+  } else if (w.w === 'toggle') {
+    el.dataset.on = val ? '1' : '0';
+    el.textContent = val ? '● on' : '○ off';
+    el.style.color = val ? 'var(--au-success)' : '';
+  } else if (w.w === 'slider') {
+    if (document.activeElement !== el) el.value = val;
+    const lbl = document.getElementById(el.id + '-lbl');
+    if (lbl) lbl.textContent = val + ' ' + (w.unit || '');
+  } else if (w.w === 'select') {
+    el.value = String(val);
+  }
+}
+
+async function loadGuestDetail(id) {
+  try {
+    const d = await api('GET', '/api/guests/' + id);
+    const host = $('#gclaims'); if (!host) return;
+    const pins = (d.claims.pins || []).map(p =>
+      `<tr><td>pin ${p.pin}</td><td>${esc(p.mode)}</td><td></td></tr>`).join('');
+    const subs = (d.bus.subs || []).map(s =>
+      `<tr><td>sub ${esc(s.filters.join(' '))}</td><td>${s.depth}/${s.qlen} queued</td>` +
+      `<td>${s.drops ? `<span class="badge caution">${s.drops} dropped</span>` : '<span class="note">0 drops</span>'}</td></tr>`).join('');
+    host.innerHTML = `<table class="cl">${pins}${subs}
+      <tr><td>published</td><td>${d.bus.published}</td><td></td></tr></table>`;
+    if (d.mem && d.mem.sampled_kb && d.mem.sampled_kb.length > 1) {
+      spark($('#gmem'), d.mem.sampled_kb);
+      const lbl = $('#gmemlbl');
+      // "sampled", never "used": MicroPython has no per-task heap (spec §10)
+      if (lbl) lbl.textContent = 'sampled · ' +
+        (d.mem.declared_kb ? 'declared ' + d.mem.declared_kb + ' KB' : 'no mem_kb declared');
+    }
+    if (d.traceback && $('#gdetail'))
+      $('#gdetail').innerHTML = `<pre class="tb">${esc(d.traceback.trim())}</pre>`;
+  } catch (e) { toast('guest: ' + e.message, 'fault'); }
+}
+
+async function act(id, verb, btn) {
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = '…';
+  try {
+    await api('POST', `/api/guests/${id}/${verb}`);
+    // the retained $sys state transition re-renders; this is just the fallback
+    setTimeout(refresh, 400);
+  } catch (e) {
+    toast(`${verb} ${id}: ${e.message}`, 'fault');
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+function openConsole(id) {
+  const host = $('#conterm');
+  const url = S.base.replace(/^http/, 'ws') +
+    `/api/guests/${id}/console/stream?token=` + encodeURIComponent(S.token);
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { return toast('console: ' + e.message, 'fault'); }
+  S.conWS = ws;
+  ws.onmessage = ev => {
+    let line; try { line = JSON.parse(ev.data); } catch (e) { return; }
+    termLine(host, consoleHTML(line), line.level === 'error' ? '' : '');
+  };
+  ws.onclose = () => { if (S.conWS === ws) termLine(host, `<span class="lv sys">sys</span>— stream closed —`); };
+}
+
+// ── login ───────────────────────────────────────────────────────────────────
+function logout(reason) {
+  S.token = '';
+  try { localStorage.removeItem('jorm.token'); } catch (e) {}
+  if (S.ws) try { S.ws.close(); } catch (e) {}
+  renderLogin(reason);
+}
+function renderLogin(reason) {
+  $('#hostchip').textContent = '—';
+  $('#mastg').hidden = true;
+  $('#tree').innerHTML = '';
+  $('#main').innerHTML = `<div class="login panel">
+    <div class="panel-hd"><span><span class="dot" style="background:var(--au-fg-soft)"></span>Connect</span><span>jorm</span></div>
+    <div class="panel-bd">
+      ${reason ? `<p class="note" style="color:var(--au-error); margin:0 0 .6rem">✗ ${esc(reason)}</p>` : ''}
+      <div class="field"><label>node url</label>
+        <input id="in-url" value="${esc(S.base)}" placeholder="http://jorm-c510.local"></div>
+      <div class="field"><label>bearer token</label>
+        <input id="in-token" type="password" value=""></div>
+      <p style="margin:.4rem 0 0"><button class="btn primary" id="connectbtn">connect</button></p>
+    </div></div>`;
+  $('#connectbtn').onclick = () => {
+    S.base = $('#in-url').value.replace(/\/+$/, '');
+    S.token = $('#in-token').value.trim();
+    if (!S.base || !S.token) return;
+    try {
+      localStorage.setItem('jorm.url', S.base);
+      localStorage.setItem('jorm.token', S.token);
+    } catch (e) {}
+    boot();
+  };
+  $('#in-token').addEventListener('keydown', ev => { if (ev.key === 'Enter') $('#connectbtn').click(); });
+}
+
+// ── boot ────────────────────────────────────────────────────────────────────
+function measureMast() {
+  document.documentElement.style.setProperty(
+    '--mast-h', $('.mast').offsetHeight + 'px');
+}
+addEventListener('resize', measureMast);
+
+function drawer(open) {
+  measureMast();
+  $('#tree').classList.toggle('open', open);
+  $('#app').classList.toggle('drawer', open);
+}
+$('#drawerbtn').onclick = () => drawer(!$('#tree').classList.contains('open'));
+$('#scrim').onclick = () => drawer(false);
+
+$('#themebtn').onclick = () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('jorm.theme', r.dataset.theme); } catch (e) {}
+};
+function boot() {
+  if (!S.token || !S.base) return renderLogin();
+  S.lastMsg = 0; S.retry = 0;
+  connect();
+}
+// `jorm open` hands us a ticket in the fragment, never a token. A fragment does
+// not reach the server, but it does reach browser history and the address bar —
+// so we strike it from the URL before we do anything else with it, and what was
+// there is dead the moment it is spent. A copied link is not a credential.
+(async () => {
+  const m = location.hash.match(/^#t=([0-9a-f]{32})$/);
+  if (m) {
+    history.replaceState(null, '', location.pathname + location.search);
+    try {
+      const r = await fetch(S.base + '/api/auth/redeem', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket: m[1] }),
+      });
+      if (r.ok) {
+        S.token = (await r.json()).token;
+        try {
+          localStorage.setItem('jorm.token', S.token);
+          localStorage.setItem('jorm.url', S.base);
+        } catch (e) { /* private window: it works, it just will not remember */ }
+      }
+    } catch (e) { /* fall through to the login form, which is the honest failure */ }
+  }
+  boot();
+})();
+// The cluster changes on its own — a node joins, a peer reboots, a guest starts on
+// another board. Re-poll on a slow cadence so the tree stays current without the
+// per-second cost of the guest list; loadCluster no-ops when logged out.
+setInterval(loadCluster, 5000);
+</script>
+</body>
+</html>
