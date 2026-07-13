@@ -79,10 +79,12 @@ class Leaf:
         while True:
             ws = None
             act_task = None
+            ka_task = None
             try:
                 ws = await wsclient.connect(host, port, '/api/bus', self.node.token)
                 await self._announce(ws)
                 self.node.log.append('sys', 'leaf: uplink established')
+                ka_task = asyncio.create_task(wsclient.keepalive(ws))
                 acts = [a['topic'] for a in self.io.get('actuators', []) if a.get('topic')]
                 if acts:
                     await ws.send(json.dumps({'op': 'sub', 'filters': acts}))
@@ -95,6 +97,8 @@ class Leaf:
             finally:
                 if act_task is not None:
                     act_task.cancel()
+                if ka_task is not None:
+                    ka_task.cancel()
                 if ws is not None:
                     await ws.close()
             await asyncio.sleep(3)
@@ -152,6 +156,8 @@ def run_leaf(node):
     wdt = machine.WDT(timeout=8000) if node.settings.get('wdt', True) else None
 
     async def _amain():
+        from jorm.netwatch import wifi_watch
+        asyncio.create_task(wifi_watch(node))     # re-associate a dropped link
         if wdt:
             async def feed():
                 while True:

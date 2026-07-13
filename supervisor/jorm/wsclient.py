@@ -25,10 +25,9 @@ async def _read_exactly(reader, n):
     return buf
 
 
-def _text_frame(text):
-    payload = text.encode()
+def _frame(opcode, payload=b''):
     mask = os.urandom(4)
-    header = bytearray([0x81])          # FIN + text opcode
+    header = bytearray([0x80 | opcode])   # FIN + opcode
     n = len(payload)
     if n < 126:
         header.append(0x80 | n)
@@ -49,7 +48,15 @@ class WsClient:
         self.writer = writer
 
     async def send(self, text):
-        self.writer.write(_text_frame(text))
+        self.writer.write(_frame(0x1, text.encode()))
+        await self.writer.drain()
+
+    async def ping(self):
+        """Send a WebSocket ping. On a connection whose peer has rebooted, this — or
+        the recv that follows — surfaces the RST as an OSError, which is how a leaf
+        learns its flagship is gone instead of blocking on recv forever (the zombie
+        socket the UI's tick-driven reconnect already solves on its side)."""
+        self.writer.write(_frame(0x9))
         await self.writer.drain()
 
     async def recv(self):
@@ -78,6 +85,24 @@ class WsClient:
             self.writer.close()
         except Exception:
             pass
+
+
+async def keepalive(ws, interval=8):
+    """Run alongside a recv loop as a background task: ping on an interval so a dead
+    connection is noticed instead of blocking forever.
+
+    A ping does double duty. On a peer that rebooted, the ping pokes the connection and
+    the peer answers with a RST — which unblocks the recv the caller is parked on, so it
+    errors and reconnects. And if the ping SEND itself fails, we close the socket, which
+    also unblocks that recv. Either way a zombie link becomes a reconnect within one
+    interval, not a hang until power-cycle.
+    """
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            await ws.ping()
+    except (OSError, EOFError):
+        await ws.close()
 
 
 async def connect(host, port, path, token):

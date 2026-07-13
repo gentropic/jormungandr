@@ -116,6 +116,8 @@ async def amain(node, sup, app):
     asyncio.create_task(sup.heartbeat())
     asyncio.create_task(sup.ntp())
     asyncio.create_task(sup.telemetry())
+    from jorm.netwatch import wifi_watch
+    asyncio.create_task(wifi_watch(node))         # re-associate a dropped link
     asyncio.create_task(sup.cluster.announce())   # beacon out (one §1)
     asyncio.create_task(sup.cluster.listen())     # peers in
     asyncio.create_task(sup.bridge.run())         # pull peers' bus slices (one §4)

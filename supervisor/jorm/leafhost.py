@@ -103,9 +103,11 @@ async def _uplink(node, sup):
         ws = None
         sub = None
         pusher = None
+        ka_task = None
         try:
             ws = await wsclient.connect(host, port, '/api/bus', node.token)
             node.log.append('sys', 'leaf-host: uplink to %s' % flagship)
+            ka_task = asyncio.create_task(wsclient.keepalive(ws))
             await ws.send(json.dumps({'op': 'sub', 'filters': [cmd_prefix + '#']}))
             await ws.send(json.dumps({
                 'op': 'pub', 'retain': True, 'topic': '$sys/leaf/' + myname,
@@ -131,6 +133,8 @@ async def _uplink(node, sup):
         finally:
             if pusher is not None:
                 pusher.cancel()
+            if ka_task is not None:
+                ka_task.cancel()
             if sub is not None:
                 sup.bus.unsubscribe(sub)
             if ws is not None:
@@ -146,6 +150,8 @@ def run_leaf_host(node):
     sup.install_import_guard()
 
     async def _amain():
+        from jorm.netwatch import wifi_watch
+        asyncio.create_task(wifi_watch(node))   # re-associate a dropped link
         asyncio.create_task(sup.heartbeat())    # WDT + runaway detection (the point)
         asyncio.create_task(sup.telemetry())    # heap/temp on the local bus
         asyncio.create_task(_uplink(node, sup))

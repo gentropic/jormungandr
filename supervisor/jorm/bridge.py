@@ -62,10 +62,15 @@ class BridgeManager:
         url, name = peer['url'], peer['name']
         host, port = _host_port(url)
         ws = None
+        ka_task = None
         try:
             ws = await wsclient.connect(host, port, '/api/bus', self.node.token)
             await ws.send(json.dumps(
                 {'op': 'sub', 'filters': self.filters, 'bridge': True}))
+            # a bridge is nearly all recv; a keepalive ping means a peer that reboots
+            # is noticed within seconds, not left as a zombie until run() happens to
+            # rebuild the whole table
+            ka_task = asyncio.create_task(wsclient.keepalive(ws))
             while True:
                 frame = json.loads(await ws.recv())
                 topic = frame.get('topic')
@@ -82,5 +87,7 @@ class BridgeManager:
         except (OSError, EOFError, ValueError):
             pass                      # peer down/refused; run() retries on its pass
         finally:
+            if ka_task is not None:
+                ka_task.cancel()
             if ws is not None:
                 await ws.close()
