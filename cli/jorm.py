@@ -11,6 +11,14 @@ import time
 import urllib.error
 import urllib.request
 
+# Guest sources, panel labels and console lines are UTF-8 — °C, ▸, the block
+# glyphs a /lib sparkline draws with. Windows defaults stdout to cp1252, which
+# turns a status line into a crash, and reading a source file as cp1252 turns
+# °C into Â°C on the way to the node. Say UTF-8 once, out loud, everywhere.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 DEFAULT_URL = os.environ.get('JORM_URL', 'http://jorm-c510.local')
 
 
@@ -65,13 +73,13 @@ def cmd_create(args):
     mpath = os.path.join(args.dir, 'manifest.json')
     if not os.path.isfile(mpath):
         sys.exit('jorm: %s has no manifest.json' % args.dir)
-    with open(mpath) as f:
+    with open(mpath, encoding='utf-8') as f:
         manifest = json.load(f)
     files = {}
     for name in os.listdir(args.dir):
         path = os.path.join(args.dir, name)
         if name != 'manifest.json' and os.path.isfile(path):
-            with open(path) as f:
+            with open(path, encoding='utf-8') as f:
                 files[name] = f.read()
     got = request(args, 'POST', '/api/guests', {'manifest': manifest, 'files': files})
     print('created guest "%s" (%d files)' % (got['id'], len(files)))
@@ -250,6 +258,30 @@ def cmd_config(args):
     print('pending restart: %s' % (', '.join(got['pending_restart']) or '—'))
 
 
+def cmd_lib(args):
+    if args.install:
+        name = os.path.basename(args.install)
+        with open(args.install, 'rb') as f:
+            body = f.read()
+        import urllib.request
+        req = urllib.request.Request(
+            args.url.rstrip('/') + '/api/lib/' + name + ('?force' if args.force else ''),
+            data=body, method='PUT')
+        req.add_header('Authorization', 'Bearer ' + args.token)
+        try:
+            got = json.load(urllib.request.urlopen(req, timeout=15))
+        except urllib.error.HTTPError as e:
+            sys.exit('jorm: %s' % json.load(e).get('error', e.reason))
+        print('installed %s' % got['installed'])
+        return
+    rows = request(args, 'GET', '/api/lib')
+    if not rows:
+        print('the library store is empty')
+    for r in rows:
+        users = ', '.join(r['imported_by']) or '—'
+        print('%-20s %6d B   imported by: %s' % (r['name'], r['bytes'], users))
+
+
 def cmd_claims(args):
     table = request(args, 'GET', '/api/claims')
     if table.get('reserved_pins'):
@@ -285,6 +317,9 @@ def main():
     p = sub.add_parser('console', help="a guest's console ring")
     p.add_argument('id')
     p.add_argument('-n', type=int, default=50)
+    p = sub.add_parser('lib', help='the shared library store')
+    p.add_argument('--install', metavar='FILE.py')
+    p.add_argument('--force', action='store_true')
     sub.add_parser('claims', help='the claims table')
     p = sub.add_parser('bus', help='watch bus traffic live (WS bridge)')
     p.add_argument('filters', nargs='*', help="topic filters (default: '#')")

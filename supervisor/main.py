@@ -55,10 +55,37 @@ def wifi_up(node):
     node.log.append('sys', 'wifi up: %s as %s' % (node.ip, node.hostname))
 
 
+async def confirm_trial(node):
+    """A trial boot confirms itself by *being* a healthy node (boot.py).
+
+    Nothing else is a sufficient test: an update that imports cleanly can still
+    fail to serve. So we wait until the API has been up long enough to mean it,
+    then drop the marker. If we never get here — crash, hang, watchdog — the next
+    boot finds .trial and reverts. The node is the health check.
+    """
+    import os
+    try:
+        os.stat('.trial')
+    except OSError:
+        return
+    await asyncio.sleep(20)
+    try:
+        os.remove('.trial')
+        from jorm.fsutil import rmtree
+        try:
+            rmtree('backup')
+        except OSError:
+            pass
+        node.log.append('sys', 'update confirmed — the node came back')
+    except OSError:
+        pass
+
+
 async def amain(node, sup, app):
     asyncio.create_task(sup.heartbeat())
     asyncio.create_task(sup.ntp())
     asyncio.create_task(sup.telemetry())
+    asyncio.create_task(confirm_trial(node))
     await sup.autostart()
     node.log.append('sys', 'api listening on :%d' % node.port)
     await app.start_server(host='0.0.0.0', port=node.port)

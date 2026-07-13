@@ -1,19 +1,54 @@
 import asyncio
 import json
+import os
 
 import machine
-from microdot import Microdot, send_file
+from microdot import Microdot, Request, send_file
 from microdot.websocket import with_websocket
+
+# The UI is one 46 KB file and OTA PUTs it whole; microdot's 16 KB default drops
+# the connection mid-body, which looks exactly like a dead node. We have 8 MB of
+# PSRAM — a 256 KB ceiling is affordable and still a ceiling.
+Request.max_content_length = 256 * 1024
+Request.max_body_length = 256 * 1024
 
 from jorm import guests as store
 from jorm import guestcfg
 from jorm.bus import BusError, valid_filter
-from jorm.fsutil import UnsafePath, safe_name, write_atomic
+from jorm.fsutil import UnsafePath, safe_name, safe_relpath, write_atomic
 from jorm.guests import RefusedError
 from jorm.manifest import ManifestError
 from jorm.claims import ClaimError
 from jorm.panels import PanelError
 from jorm.ring import as_json
+
+
+def _mkdirs(path):
+    grown = ''
+    for part in path.split('/')[:-1]:
+        grown = grown + '/' + part if grown else part
+        try:
+            os.mkdir(grown)
+        except OSError:
+            pass
+
+
+def _walk_staged(root, prefix=''):
+    for name in os.listdir(root):
+        full = root + '/' + name
+        if os.stat(full)[0] & 0x4000:
+            for sub in _walk_staged(full, prefix + name + '/'):
+                yield sub
+        else:
+            yield prefix + name
+
+
+def _read_marker(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 def create_app(node, sup):
@@ -81,6 +116,52 @@ def create_app(node, sup):
         node.log.append('sys', 'reboot requested over API')
         _reboot_soon()
         return {'rebooting': True}
+
+    # -- supervisor OTA (spec §11): stage, update, trial, confirm/rollback ----
+
+    OTA_ROOTS = ('main.py', 'boot.py', 'ui.html', 'jorm/', 'lib/')
+
+    @app.get('/api/node/update')
+    async def api_update_status(req):
+        try:
+            staged = sorted(_walk_staged(store.OTA_STAGED))
+        except OSError:
+            staged = []
+        return {
+            'staged': staged,
+            'trial': _read_marker('.trial'),
+            'rolled_back': _read_marker('.rolled-back'),
+            'version': node.info()['version'],
+        }
+
+    @app.put('/api/node/files/<path:path>')
+    async def api_update_stage(req, path):
+        path = safe_relpath(path)
+        if not any(path == r or path.startswith(r) for r in OTA_ROOTS):
+            raise RefusedError('OTA may only replace %s' % ', '.join(OTA_ROOTS))
+        dest = store.OTA_STAGED + '/' + path
+        _mkdirs(dest)
+        write_atomic(dest, req.body.decode())
+        return {'staged': path, 'bytes': len(req.body)}
+
+    @app.post('/api/node/update')
+    async def api_update_apply(req):
+        staged = sorted(_walk_staged(store.OTA_STAGED))
+        if not staged:
+            raise RefusedError('nothing staged — PUT /api/node/files/<path> first')
+        write_atomic('.update', ','.join(staged))
+        node.log.append('sys', 'update: %d file(s) staged — rebooting to apply' % len(staged))
+        _reboot_soon()
+        return {'applying': staged, 'rebooting': True,
+                'note': 'the next boot is a trial; it self-reverts unless the node comes back'}
+
+    @app.delete('/api/node/update')
+    async def api_update_discard(req):
+        try:
+            store.rmtree(store.OTA_STAGED)
+        except OSError:
+            pass
+        return {'discarded': True}
 
     @app.post('/api/node/maintenance')
     async def api_node_maintenance(req):
@@ -195,6 +276,85 @@ def create_app(node, sup):
         finally:
             task.cancel()
             guest.console.untap(tap)
+
+    # -- the shared library store (spec §1/§6) --------------------------------
+
+    def importers(name):
+        """Which installed guests import this library? A static scan of bundle
+        sources at install time — cheap, and its one blind spot is stated: there
+        is no dynamic import in the guest SDK, so there is nothing for it to miss.
+        """
+        users = []
+        for gid, guest in sup.guests.items():
+            try:
+                names = os.listdir(guest.dir)
+            except OSError:
+                continue
+            for fn in names:
+                if not fn.endswith('.py'):
+                    continue
+                try:
+                    with open(guest.dir + '/' + fn) as f:
+                        src_ = f.read()
+                except OSError:
+                    continue
+                for line in src_.split('\n'):
+                    line = line.strip()
+                    if ((line.startswith('import ') and name in line.split()) or
+                            (line.startswith('from ') and line.split()[1].split('.')[0] == name)):
+                        users.append(gid)
+                        break
+                if gid in users:
+                    break
+        return users
+
+    @app.get('/api/lib')
+    async def api_lib(req):
+        out = []
+        try:
+            names = sorted(os.listdir(store.LIB_DIR))
+        except OSError:
+            names = []
+        for fn in names:
+            if fn.endswith('.py') and fn[:-3] not in RESERVED_LIBS:
+                mod = fn[:-3]
+                out.append({'name': mod,
+                            'bytes': os.stat(store.LIB_DIR + '/' + fn)[6],
+                            'imported_by': importers(mod)})
+        return out
+
+    # The supervisor's own vendored deps share lib/ with the guest library store
+    # (spec §1 names it /lib, and MicroPython already has it on sys.path). They
+    # are packages — lib/microdot/ — so a lib/<name>.py cannot collide by
+    # accident, but it could on purpose. Say no.
+    RESERVED_LIBS = ('microdot',)
+
+    @app.put('/api/lib/<name>')
+    async def api_lib_put(req, name):
+        mod = safe_name(name if name.endswith('.py') else name + '.py')[:-3]
+        if mod in RESERVED_LIBS:
+            raise RefusedError('"%s" is the supervisor\'s own — not yours to replace' % mod)
+        running = [g for g in importers(mod) if sup.guests[g].state == 'running']
+        if running and req.args.get('force') is None:
+            raise RefusedError(
+                'library "%s" is imported by running guest(s) %s — they keep their '
+                'loaded copy until restart regardless (Python caches modules); '
+                '?force if you know this' % (mod, ', '.join(running)))
+        write_atomic(store.LIB_DIR + '/' + mod + '.py', req.body.decode())
+        return {'installed': mod, 'imported_by': importers(mod)}
+
+    @app.delete('/api/lib/<name>')
+    async def api_lib_delete(req, name):
+        mod = safe_name(name if name.endswith('.py') else name + '.py')[:-3]
+        users = importers(mod)
+        if users and req.args.get('force') is None:
+            raise RefusedError('library "%s" is imported by %s — refused'
+                               % (mod, ', '.join(users)))
+        try:
+            os.remove(store.LIB_DIR + '/' + mod + '.py')
+        except OSError:
+            return {'error': 'no such library'}, 404
+        return {'removed': mod}
 
     # -- claims ----------------------------------------------------------------
 

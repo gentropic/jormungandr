@@ -1,0 +1,15 @@
+{
+  "spec": 0,
+  "id": "pulse",
+  "name": "Pulse",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "restart": "never",
+  "caps": {
+    "pwm": [ 5 ],
+    "bus": { "pub": ["pulse/#"], "sub": ["cmd/pulse/#"] },
+    "ui": true,
+    "mem_kb": 8
+  }
+}

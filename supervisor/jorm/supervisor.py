@@ -15,7 +15,15 @@ from jorm import clock
 from jorm.bus import Bus, BusError
 from jorm.claims import Claims
 from jorm.fsutil import ensure_dir, write_atomic
-from jorm.guests import Guest, GUESTS_DIR
+from jorm.guests import Guest, GUESTS_DIR, LIB_DIR
+
+
+def _exists(path):
+    try:
+        os.stat(path)
+        return True
+    except OSError:
+        return False
 
 RTC_TAG = b'jorm!'
 
@@ -85,6 +93,13 @@ class Supervisor:
                 tries += 1
                 await asyncio.sleep(min(300, 5 * 2 ** tries))  # 10s, 20s, 40s … 5 min
 
+    def mcu_temp(self):
+        try:
+            import esp32
+            return esp32.mcu_temperature()
+        except (ImportError, AttributeError, OSError):
+            return None
+
     async def telemetry(self):
         n = 0
         while True:
@@ -94,10 +109,25 @@ class Supervisor:
                 self.sys_publish('$sys/heap',
                                  {'free': gc.mem_free(), 'alloc': gc.mem_alloc()},
                                  retain=True)
+                temp = self.mcu_temp()
+                if temp is not None:
+                    # Celsius. There is no other unit.
+                    self.sys_publish('$sys/temp', {'c': temp}, retain=True)
             n += 1
             await asyncio.sleep(1)
 
     # -- import guard (spec §1: a guest never imports machine et al.) ------
+
+    def guest_path(self, name):
+        """Three-tier resolution (spec §1): the bundle dir first, then the node's
+        shared library store, then the stdlib whitelist. Returns a path or None."""
+        gid = self.current
+        if gid:
+            p = '%s/%s/%s.py' % (GUESTS_DIR, gid, name)
+            if _exists(p):
+                return p
+        p = '%s/%s.py' % (LIB_DIR, name)
+        return p if _exists(p) else None
 
     def install_import_guard(self):
         # asyncio lazy-loads submodules on first attribute touch; force them all
@@ -115,10 +145,17 @@ class Supervisor:
         def guarded(name, *args):
             if self.current is None:
                 return orig(name, *args)
-            if name.split('.')[0] in IMPORT_WHITELIST:
+            root = name.split('.')[0]
+            if root in IMPORT_WHITELIST:
                 return orig(name, *args)
-            raise ImportError('"%s" is not importable in a guest — everything arrives through hal (spec §1)'
-                              % name)
+            if self.guest_path(root):
+                # A bundle module or an installed /lib driver. sys.path is set to
+                # [bundle, /lib] for the duration of the guest's load (guests.py),
+                # so the ordinary import machinery finds the right file.
+                return orig(name, *args)
+            raise ImportError('"%s" is not importable in a guest — everything arrives '
+                              'through hal, or ships in the bundle, or is installed '
+                              'in /lib (spec §1)' % name)
 
         builtins.__import__ = guarded
 
@@ -140,10 +177,12 @@ class Supervisor:
 
     def scan(self):
         ensure_dir(GUESTS_DIR)
+        ensure_dir(LIB_DIR)
         for id_ in os.listdir(GUESTS_DIR):
             if not os.stat(GUESTS_DIR + '/' + id_)[0] & 0x4000:
                 continue
             guest = Guest(self, id_)
+            guest.load_num()
             try:
                 guest.load_manifest()
             except Exception as e:
@@ -174,6 +213,8 @@ class Supervisor:
             except (AttributeError, OSError, ValueError):
                 pass
         last = time.ticks_ms()
+        last_alloc = gc.mem_alloc()
+        sample_n = 0
         while True:
             await asyncio.sleep_ms(100)
             if wdt:
@@ -181,6 +222,24 @@ class Supervisor:
             now = time.ticks_ms()
             gap = time.ticks_diff(now, last)
             last = now
+
+            # Sampled memory attribution (spec §2/§10): MicroPython has no
+            # per-task heap, so we attribute each interval's allocation delta to
+            # whoever held the CPU. It is a sample, not a measurement, and the UI
+            # says so — but it is enough to see which guest is growing.
+            alloc = gc.mem_alloc()
+            delta = alloc - last_alloc
+            last_alloc = alloc
+            holder = self.guests.get(self.last_seen)
+            if holder and delta > 0:
+                holder.mem_acc = getattr(holder, 'mem_acc', 0) + delta
+            sample_n += 1
+            if sample_n % 20 == 0:   # every ~2 s, push a point to each series
+                for guest in self.guests.values():
+                    kb = getattr(guest, 'mem_acc', 0) / 1024.0
+                    guest.mem.append(kb)
+                    if len(guest.mem) > 30:
+                        guest.mem.pop(0)
             if gap > 350 and self.last_seen:  # 100 ms period + 250 ms starvation budget
                 guest = self.guests.get(self.last_seen)
                 if guest and guest.state == 'running':

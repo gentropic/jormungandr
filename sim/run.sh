@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Run the supervisor as a sim node on MicroPython's unix port (see spec §11).
-# The sim "flash" is sim/fs/ — cwd of the process, like / on a real node.
+# Run the supervisor as a sim node on MicroPython's unix port (spec §11.15).
+#
+# The sim "flash" is sim/fs/ — and it holds the supervisor itself, exactly as a
+# real node's flash does. That fidelity is not decoration: OTA rewrites files in
+# the flash, so a sim that ran the supervisor from the repo instead would test a
+# code path that does not exist on any board.
+#
+#   sim/run.sh                 sync the supervisor from the repo, then boot
+#   SIM_NO_SYNC=1 sim/run.sh   boot whatever is already in the flash (OTA tests)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,16 +19,24 @@ if [ ! -x "$MPY" ]; then
     exit 1
 fi
 
+mkdir -p "$FS"
 if [ ! -f "$FS/settings.json" ]; then
     printf '{"token": "dev-token", "port": 8000}\n' > "$FS/settings.json"
     echo "sim: created $FS/settings.json (token: dev-token, port: 8000)"
 fi
 
-# the UI deploys beside main.py on a real node; mirror that into the sim flash
-cp "$ROOT/supervisor/ui.html" "$FS/ui.html"
+if [ -z "${SIM_NO_SYNC:-}" ]; then
+    mkdir -p "$FS/jorm"
+    cp "$ROOT/supervisor/main.py" "$ROOT/supervisor/boot.py" "$ROOT/supervisor/ui.html" "$FS/"
+    cp "$ROOT"/supervisor/jorm/*.py "$FS/jorm/"
+fi
+# SIM_SYNC_ONLY: refresh the flash and exit, for harnesses that then run their own
+# respawn loop (a node reboots; the sim exits, so something has to restart it).
+[ -n "${SIM_SYNC_ONLY:-}" ] && exit 0
 
-# sim/ first so the machine/network stubs shadow nothing real; .frozen keeps
-# the unix port's frozen stdlib (asyncio) reachable once MICROPYPATH is set.
-export MICROPYPATH="$ROOT/sim:$ROOT/supervisor:$ROOT/supervisor/lib:.frozen"
+# sim/ first so the machine/network stubs shadow the real thing; then the flash
+# (where the supervisor lives); then the vendored libs.
+export MICROPYPATH="$ROOT/sim:$FS:$ROOT/supervisor/lib:.frozen"
 cd "$FS"
-exec "$MPY" "$ROOT/supervisor/main.py"
+# a real node runs boot.py then main.py; the unix port needs to be told
+exec "$MPY" -c "exec(open('boot.py').read()); exec(open('main.py').read())"

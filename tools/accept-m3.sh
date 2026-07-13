@@ -56,11 +56,11 @@ $JORM console thermo | grep -q "config: period_ms -> 500" || fail "guest never s
 pass "live field applied while running"
 
 echo "== non-live write goes pending, restart clears it"
-$JORM config thermo unit_f=true | grep -q "pending restart: unit_f" || fail "pending"
-$JORM config thermo | grep -q "unit_f.*PENDING RESTART" || fail "pending badge"
+$JORM config thermo gauge_max_c=80 | grep -q "pending restart: gauge_max_c" || fail "pending"
+$JORM config thermo | grep -q "gauge_max_c.*PENDING RESTART" || fail "pending badge"
 $JORM restart thermo >/dev/null; sleep 0.5
 ! $JORM config thermo | grep -q "PENDING RESTART" || fail "restart did not clear pending"
-$JORM guests | grep -q "°F" || fail "unit_f did not apply on restart"
+$JORM config thermo | grep -Eq "gauge_max_c +80" || fail "gauge_max_c did not apply on restart"
 pass "pending-restart amber, cleared by restart"
 
 echo "== editable while stopped, like VM options"

@@ -99,7 +99,11 @@ body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 va
 .trow { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left;
   font:400 .78rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
   border-left:2px solid transparent; padding:.3rem .8rem; cursor:pointer; }
-.trow.g { padding-left:1.6rem; }
+.trow.g { padding-left:2.1rem; }
+.trow.root { font-weight:700; }
+.tw { width:.9em; display:inline-block; text-align:center; color:var(--au-fg-soft); }
+.tnum { color:var(--au-fg-soft); margin-right:.15rem; }
+.tree .grp { padding-left:.4rem; }
 .trow:hover { background:var(--au-surface-bright); }
 .trow.sel { background:var(--au-selected-soft); border-left-color:var(--au-selected); }
 .trow .st { width:1em; text-align:center; }
@@ -264,7 +268,8 @@ const S = {
   ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
   conWS: null, logTimer: null, busPaused: false,
   panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
-  clockOk: true,
+  clockOk: true, temp: null,
+  open: { dc: true, node: true },
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -402,6 +407,10 @@ function route(topic, msg) {
     renderMastGauges();
     const g = $('#sum-heap'); if (g) g.firstChild.textContent = S.heap[S.heap.length - 1].toFixed(2);
     spark($('#sp-heap'), S.heap); spark($('#sp-heap2'), S.heap);
+  } else if (topic === '$sys/temp' && msg) {
+    S.temp = msg.c;
+    const el = $('#sum-temp');
+    if (el) el.firstChild.textContent = msg.c;
   } else if (topic.startsWith('$ui/')) {
     const parts = topic.split('/');
     if (parts[2] === 'panel') {
@@ -472,17 +481,48 @@ function renderMastGauges() {
 }
 
 function renderTree() {
-  const rows = [`<div class="sect">Node</div>`,
-    `<button class="trow${S.sel === null ? ' sel' : ''}" data-id=""><span class="st go">◉</span>${esc(S.node ? S.node.hostname : '…')}</button>`,
-    `<div class="sect">Guests</div>`];
-  for (const id of Object.keys(S.guests).sort()) {
-    const [gl, cls] = GLYPH[S.guests[id].state] || ['?', 'off'];
-    rows.push(`<button class="trow g${S.sel === id ? ' sel' : ''}" data-id="${esc(id)}">` +
-      `<span class="st ${cls}">${gl}</span>${esc(id)}</button>`);
+  // Proxmox shape: Datacenter → node → guests, each level collapsible. Zero has
+  // exactly one node; the markup is the cluster's from day one, because the v1
+  // story (mDNS discovery, migration) adds nodes here and nothing else changes.
+  const ids = Object.keys(S.guests).sort((a, b) =>
+    (S.guests[a].num || 0) - (S.guests[b].num || 0) || a.localeCompare(b));
+  const running = ids.filter(id => S.guests[id].state === 'running').length;
+  const rows = [];
+
+  rows.push(`<button class="trow root" data-tw="dc">` +
+    `<span class="tw">${S.open.dc ? '▾' : '▸'}</span><span class="st info">▣</span>Datacenter</button>`);
+
+  if (S.open.dc) {
+    rows.push(`<button class="trow grp${S.sel === null ? ' sel' : ''}" data-id="" data-tw="node">` +
+      `<span class="tw">${S.open.node ? '▾' : '▸'}</span>` +
+      `<span class="st go">◉</span>${esc(S.node ? S.node.hostname : '…')}` +
+      `<span class="note" style="margin-left:auto">${running}/${ids.length}</span></button>`);
+
+    if (S.open.node) {
+      for (const id of ids) {
+        const g = S.guests[id];
+        const [gl, cls] = GLYPH[g.state] || ['?', 'off'];
+        rows.push(`<button class="trow g${S.sel === id ? ' sel' : ''}" data-id="${esc(id)}">` +
+          `<span class="st ${cls}">${gl}</span>` +
+          `<span class="tnum">${g.num || '—'}</span>(${esc(id)})` +
+          (g.suspected ? ' <span class="st fault" title="suspected in a watchdog reset">⚠</span>' : '') +
+          `</button>`);
+      }
+      if (!ids.length)
+        rows.push(`<div class="note" style="padding:.3rem 2.1rem">no guests installed</div>`);
+    }
   }
-  if (!Object.keys(S.guests).length) rows.push(`<div class="note" style="padding:.3rem .8rem">none installed</div>`);
   $('#tree').innerHTML = rows.join('');
-  $('#tree').querySelectorAll('.trow').forEach(row => row.onclick = () => select(row.dataset.id || null));
+  $('#tree').querySelectorAll('.trow').forEach(row => row.onclick = ev => {
+    const tw = row.dataset.tw;
+    // clicking the twisty folds; clicking the row selects
+    if (tw && ev.target.classList.contains('tw')) {
+      S.open[tw] = !S.open[tw];
+      renderTree();
+      return;
+    }
+    if (row.dataset.id !== undefined) select(row.dataset.id || null);
+  });
 }
 
 function select(id) {
@@ -537,6 +577,8 @@ function renderNode(main) {
             <div class="gval">${(n.heap_alloc / 1024).toFixed(0)}<span class="unit">KB</span></div></div>
           <div class="gauge go"><div class="glbl">Running</div>
             <div class="gval">${Object.values(S.guests).filter(g => g.state === 'running').length}<span class="unit">/${Object.keys(S.guests).length}</span></div></div>
+          <div class="gauge${S.temp > 70 ? ' caution' : ''}"><div class="glbl">MCU temp</div>
+            <div class="gval" id="sum-temp">${S.temp == null ? '—' : S.temp}<span class="unit">°C</span></div></div>
         </div>
       </div>
       <div class="panel"><div class="panel-hd"><span><span class="dot"></span>Node</span><span>${esc(n.profile)}</span></div>
@@ -633,14 +675,17 @@ function renderGuest(main, id) {
       <div class="panel">
         <div class="panel-hd"><span><span class="dot" style="background:var(--au-${
           {go:'success',fault:'error',caution:'warn'}[BADGE[g.state]] || 'fg-soft'})">
-          </span>Guest · ${esc(id)}</span><span>${esc(g.name || id)}</span></div>
+          </span>${g.num || '—'} (${esc(id)})</span><span>${esc(g.name || id)}</span></div>
         <div class="panel-bd">
           <p style="margin:.1rem 0 .6rem"><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span>
             ${g.suspected ? '<span class="badge caution">⚠ suspected — WDT</span>' : ''}
             <span class="note" style="margin-left:.5rem">${esc(g.status || '')}</span></p>
           <dl class="kv" id="gkv"><dt>caps</dt><dd>${esc((g.caps || []).join(' · ') || 'none')}</dd>
             <dt>restart</dt><dd>${esc(g.restart)}</dd>
-            <dt>autostart</dt><dd>${g.autostart ? '✓' : '—'}</dd></dl>
+            <dt>autostart</dt><dd>${g.autostart ? '✓' : '—'}</dd>
+            <dt>memory</dt><dd style="display:flex;align-items:center;gap:.5rem">
+              <svg class="spark" id="gmem" width="90" height="20" viewBox="0 0 90 20"></svg>
+              <span class="note" id="gmemlbl">sampled</span></dd></dl>
           <div id="gdetail"></div>
           <p style="margin:.8rem 0 0; display:flex; gap:.5rem" id="gbtns">
             <button class="btn primary" data-act="start" ${g.state === 'running' || g.state === 'unresponsive' ? 'disabled' : ''}>▶ start</button>
@@ -868,6 +913,13 @@ async function loadGuestDetail(id) {
       `<td>${s.drops ? `<span class="badge caution">${s.drops} dropped</span>` : '<span class="note">0 drops</span>'}</td></tr>`).join('');
     host.innerHTML = `<table class="cl">${pins}${subs}
       <tr><td>published</td><td>${d.bus.published}</td><td></td></tr></table>`;
+    if (d.mem && d.mem.sampled_kb && d.mem.sampled_kb.length > 1) {
+      spark($('#gmem'), d.mem.sampled_kb);
+      const lbl = $('#gmemlbl');
+      // "sampled", never "used": MicroPython has no per-task heap (spec §10)
+      if (lbl) lbl.textContent = 'sampled · ' +
+        (d.mem.declared_kb ? 'declared ' + d.mem.declared_kb + ' KB' : 'no mem_kb declared');
+    }
     if (d.traceback && $('#gdetail'))
       $('#gdetail').innerHTML = `<pre class="tb">${esc(d.traceback.trim())}</pre>`;
   } catch (e) { toast('guest: ' + e.message, 'fault'); }

@@ -1,0 +1,14 @@
+{
+  "spec": 0,
+  "id": "vitals",
+  "name": "Vitals",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": true,
+  "restart": "on-crash",
+  "caps": {
+    "bus": { "pub": ["vitals/#"], "sub": ["$sys/#"] },
+    "ui": true
+  }
+}

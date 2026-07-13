@@ -16,7 +16,10 @@ from jorm.manifest import validate, ManifestError
 from jorm.ring import Ring
 
 GUESTS_DIR = 'guests'
+LIB_DIR = 'lib'
+OTA_STAGED = 'staged'
 MEM_RESERVE = 32 * 1024  # what the supervisor keeps for itself before any grant
+FIRST_NUM = 100          # guests are numbered from 100, Proxmox-style
 
 
 class RefusedError(Exception):
@@ -40,6 +43,8 @@ class Guest:
         self.cfg_schema = None
         self.cfg_pending = set()
         self.cfg_watchers = []
+        self.num = None          # VMID-ish: assigned at install, stable for life
+        self.mem = []            # sampled heap attributed to this guest (spec §2)
         self._child_error = None
         self._crash_count = 0
 
@@ -72,10 +77,19 @@ class Guest:
         except OSError:
             return None
 
+    def load_num(self):
+        try:
+            with open(self.dir + '/.num') as f:
+                self.num = int(f.read())
+        except (OSError, ValueError):
+            self.num = None
+        return self.num
+
     def summary(self):
         m = self.manifest or {}
         return {
             'id': self.id,
+            'num': self.num,
             'name': m.get('name', self.id),
             'state': self.state,
             'status': self.status,
@@ -92,6 +106,11 @@ class Guest:
         d['traceback'] = self.traceback
         d['bus'] = {'subs': [s.info() for s in self.subs],
                     'published': self.sup.bus.pub_counts.get(self.id, 0)}
+        # Sampled, not measured — MicroPython has no per-task heap (spec §10).
+        # The supervisor attributes each heartbeat's allocation delta to whichever
+        # guest held the CPU. Honest label in the UI: "sampled", never "used".
+        d['mem'] = {'sampled_kb': [round(k, 1) for k in self.mem],
+                    'declared_kb': (self.manifest or {}).get('caps', {}).get('mem_kb')}
         return d
 
     # -- lifecycle ---------------------------------------------------------
@@ -133,11 +152,17 @@ class Guest:
         try:
             with open(self.dir + '/' + entry) as f:
                 src = f.read()
-            self.sup.resume(self.id)  # import guard applies to load-time code too
+            # Bundle first, then /lib (spec §1). Only for the load: imports belong
+            # at module level, and a lazy import inside a running guest would race
+            # every other guest's path — we have been bitten by exactly that.
+            saved = sys.path[:]
+            sys.path[:] = [self.dir, LIB_DIR] + saved
+            self.sup.resume(self.id)  # the guard applies to load-time code too
             try:
                 exec(compile(src, self.dir + '/' + entry, 'exec'), ns)
             finally:
                 self.sup.park(self.id)
+                sys.path[:] = saved
             run = ns.get('run')
             if run is None:
                 raise ManifestError('%s defines no run(hal) (spec §1)' % entry)
@@ -263,5 +288,8 @@ def create(sup, manifest, files):
 
     guest = Guest(sup, id_)
     guest.manifest = m
+    nums = [g.num for g in sup.guests.values() if g.num]
+    guest.num = max(nums) + 1 if nums else FIRST_NUM
+    write_atomic(path + '/.num', str(guest.num))
     sup.guests[id_] = guest
     return guest

@@ -9,20 +9,19 @@ async def run(hal):
         {'key': 'period_ms', 'w': 'slider', 'label': 'Sample period',
          'min': 200, 'max': 5000, 'step': 100, 'unit': 'ms',
          'default': 1000, 'live': True},
-        {'key': 'unit_f', 'w': 'toggle', 'label': 'Fahrenheit',
-         'default': False, 'live': False},
+        {'key': 'gauge_max_c', 'w': 'slider', 'label': 'Gauge maximum',
+         'min': 40, 'max': 120, 'step': 5, 'unit': '°C',
+         'default': 40, 'live': False},
     ])
 
-    # The panel is declared once, at startup, against the config as it stands —
-    # which is exactly why `unit_f` is live: false. A gauge whose label and
-    # payload can disagree is a gauge that lies; changing the unit costs a
-    # restart, and the UI says so in amber.
-    fahrenheit = hal.config.get('unit_f')
-    unit, lo, hi = ('°F', 32, 104) if fahrenheit else ('°C', 0, 40)
+    # The panel is declared once, at startup — which is exactly why gauge_max_c is
+    # live: false. A gauge cannot rescale under a reading that is already drawn;
+    # changing the range costs a restart, and the UI says so in amber.
+    gauge_max = hal.config.get('gauge_max_c', 40)
 
     await hal.ui.panel([
         {'w': 'gauge', 'id': 't', 'label': 'Temp', 'bind': 'thermo/temp',
-         'path': 'deg', 'min': lo, 'max': hi, 'unit': unit},
+         'path': 'deg', 'min': 0, 'max': gauge_max, 'unit': '°C'},
         {'w': 'value', 'id': 'raw', 'label': 'ADC', 'bind': 'thermo/temp',
          'path': 'raw', 'spark': True},
         {'w': 'slider', 'id': 'period', 'label': 'Period',
@@ -53,9 +52,16 @@ async def run(hal):
 
     while True:
         raw = adc.read_u16()
-        c = 15.0 + (raw - 28000) / 800.0
-        deg = round(c * 9 / 5 + 32, 1) if fahrenheit else round(c, 1)
-        # the unit travels with the reading — a consumer never has to guess
-        hal.bus.publish('thermo/temp', {'deg': deg, 'unit': unit, 'raw': raw}, retain=True)
-        hal.status('%.1f %s' % (deg, unit))
+        deg = round(15.0 + (raw - 28000) / 800.0, 1)
+        # With nothing wired to the pin the ADC reads a floating input, and this
+        # formula turns noise into a confident-looking temperature. The reading is
+        # honest; the *impression* is not. So say which one you are looking at.
+        plausible = -10 <= deg <= 60
+        note = '' if plausible else '  (pin 4 floating? nothing attached)'
+        # Celsius. The unit still travels with the reading, so a consumer never
+        # has to guess — it just never has to guess about anything but Celsius.
+        hal.bus.publish('thermo/temp',
+                        {'deg': deg, 'unit': '°C', 'raw': raw, 'plausible': plausible},
+                        retain=True)
+        hal.status('%.1f °C%s' % (deg, note))
         await hal.sleep_ms(st['period'])

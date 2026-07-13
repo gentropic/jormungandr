@@ -88,7 +88,7 @@ ok('origin: ui line marked in action orange', true);
 if (SHOTS) await page.screenshot({ path: SHOTS + '/2-bus-monitor.png' });
 
 // guest console
-await page.click('.trow.g:has-text("echoer")');
+await page.click('.trow.g:has-text("(echoer)")');
 await page.click('.tab[data-tab="console"]');
 await page.waitForFunction(() =>
   document.querySelectorAll('#conterm .row').length >= 2, null, { timeout: 5000 });
@@ -96,27 +96,27 @@ ok('guest console streams history over WS',
   (await page.textContent('#conterm')).includes('running'));
 
 // lifecycle: stop blinky, watch the tree flip, start it again
-await page.click('.trow.g:has-text("blinky")');
+await page.click('.trow.g:has-text("(blinky)")');
 await page.click('.tab[data-tab="overview"]');
 await page.waitForSelector('[data-act="stop"]');
 await page.click('[data-act="stop"]');
 await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('.trow.g')]
-    .find(r => r.textContent.includes('blinky'));
+    .find(r => r.textContent.includes('(blinky)'));
   return row && row.querySelector('.st').textContent === '○';
 }, null, { timeout: 6000 });
 ok('stop blinky → tree glyph flips to ○ via $sys state', true);
 await page.click('[data-act="start"]');
 await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('.trow.g')]
-    .find(r => r.textContent.includes('blinky'));
+    .find(r => r.textContent.includes('(blinky)'));
   return row && row.querySelector('.st').textContent === '●';
 }, null, { timeout: 6000 });
 ok('start blinky → glyph back to ●', true);
 if (SHOTS) await page.screenshot({ path: SHOTS + '/3-guest-overview.png' });
 
 // claims
-await page.click('.trow:not(.g)');
+await page.click('.trow.grp');
 await page.click('.tab[data-tab="claims"]');
 await page.waitForFunction(() => {
   const el = document.querySelector('#claimsbody');
@@ -126,7 +126,7 @@ ok('claims table shows pin 2 → blinky',
   (await page.textContent('#claimsbody')).includes('blinky'));
 
 // ── M3: the declared panel on the dashboard wall ─────────────────────────
-await page.click('.trow:not(.g)');
+await page.click('.trow.grp');
 await page.click('.tab[data-tab="dashboard"]');
 await page.waitForSelector('[data-panel="thermo"]', { timeout: 6000 });
 await page.waitForFunction(() =>
@@ -150,14 +150,12 @@ for (let i = 0; i < 20 && !sawSet; i++) {
 ok('panel slider commands its guest (origin: ui)', sawSet);
 
 // ── M3: config form — live apply + pending-restart amber ─────────────────
-await page.click('.trow.g:has-text("thermo")');
+await page.click('.trow.g:has-text("(thermo)")');
 await page.click('.tab[data-tab="config"]');
 await page.waitForSelector('[data-key="period_ms"]', { timeout: 6000 });
 await page.evaluate(() => {
-  const el = document.querySelector('[data-key="period_ms"]');
-  el.value = 1500;
-  const box = document.querySelector('[data-key="unit_f"]');
-  box.checked = true;
+  document.querySelector('[data-key="period_ms"]').value = 1500;   // live
+  document.querySelector('[data-key="gauge_max_c"]').value = 80;   // pending restart
 });
 await page.click('#cfgsave');
 await page.waitForFunction(() =>
@@ -174,7 +172,7 @@ ok('live config write streamed to hal.config.watch', sawCfg);
 
 // ── M3: panels outlive their guests — frozen, not vanished ───────────────
 await fetch(`${BASE}/api/guests/thermo/stop`, { method: 'POST', headers: HDRS });
-await page.click('.trow:not(.g)');
+await page.click('.trow.grp');
 await page.click('.tab[data-tab="dashboard"]');
 await page.waitForFunction(() => {
   const el = document.querySelector('[data-panel="thermo"]');
@@ -182,6 +180,21 @@ await page.waitForFunction(() => {
 }, null, { timeout: 8000 });
 ok('stopped guest → panel grays and freezes last values', true);
 await fetch(`${BASE}/api/guests/thermo/start`, { method: 'POST', headers: HDRS });
+
+// ── the tree folds (Proxmox shape: Datacenter → node → guests) ───────────
+await page.click('.trow[data-tw="node"] .tw');
+await page.waitForFunction(() =>
+  document.querySelectorAll('.trow.g').length === 0, null, { timeout: 3000 });
+ok('collapsing the node hides its guests', true);
+await page.click('.trow[data-tw="node"] .tw');
+await page.waitForFunction(() =>
+  document.querySelectorAll('.trow.g').length === 4, null, { timeout: 3000 });
+ok('expanding brings them back', true);
+const firstRow = await page.evaluate(() => {
+  const row = document.querySelector('.trow.g');
+  return row ? row.textContent : '(no guest row)';
+});
+ok(`guests carry a number — ${firstRow}`, /\d{3}/.test(firstRow));
 
 // theme toggle (headless prefers light, real desktops vary — test the flip)
 const themeBefore = await page.evaluate(() => document.documentElement.dataset.theme);

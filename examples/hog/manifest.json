@@ -1,0 +1,11 @@
+{
+  "spec": 0,
+  "id": "hog",
+  "name": "Hog (ungovernable)",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": false,
+  "restart": "never",
+  "caps": {}
+}
