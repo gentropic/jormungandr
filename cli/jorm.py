@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """jorm — API client and test harness for a jormungandr node (spec §11).
 
-Configuration: --url/--token flags, or JORM_URL / JORM_TOKEN env vars.
+Which node:  -n/--node <name> from the registry (jorm nodes add …), else
+             $JORM_NODE, else the registry default, else --url/--token or
+             $JORM_URL/$JORM_TOKEN. An explicit --url always wins, so a script
+             can override a person's saved default.
+
+    jorm nodes add c510 http://jorm-c510.local --token <t>
+    jorm nodes                       # which boards, and which is default
+    jorm -n c510 guests
+    jorm -n c510 shell -c 'ls /guests'
+    jorm -n c510 console parrot -a   # attach: read AND type
 """
 import argparse
 import json
@@ -20,6 +29,108 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 DEFAULT_URL = os.environ.get('JORM_URL', 'http://jorm-c510.local')
+
+
+# ── the node registry ──────────────────────────────────────────────────────
+# A board is a name, not a URL and a 32-character token you retype. Without this
+# a second node is technically supported and practically never used, which is the
+# same as not supporting it.
+
+def nodes_path():
+    base = (os.environ.get('APPDATA') if os.name == 'nt'
+            else os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'))
+    return os.path.join(base, 'jorm', 'nodes.json')
+
+
+def nodes_load():
+    try:
+        with open(nodes_path(), encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {'nodes': {}, 'default': None}
+
+
+def nodes_save(reg):
+    path = nodes_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(reg, f, indent=2)
+        f.write('\n')
+    os.replace(tmp, path)
+    if os.name != 'nt':
+        os.chmod(path, 0o600)   # it holds bearer tokens
+
+
+def resolve_node(args):
+    """Work out which node we are talking to, and say so when we cannot.
+
+    Order: --url wins (explicit beats stored), then --node, then JORM_NODE, then
+    the registry default, then JORM_URL/JORM_TOKEN. The precedence exists so that
+    a script can always override a person's saved default.
+    """
+    if args.url != DEFAULT_URL or (os.environ.get('JORM_URL') and not args.node):
+        return args.url, args.token
+
+    reg = nodes_load()
+    name = args.node or os.environ.get('JORM_NODE') or reg.get('default')
+    if name:
+        entry = reg['nodes'].get(name)
+        if not entry:
+            known = ', '.join(sorted(reg['nodes'])) or 'none'
+            sys.exit('jorm: no node named "%s" (known: %s)' % (name, known))
+        return entry['url'], args.token or entry.get('token', '')
+    return args.url, args.token
+
+
+def cmd_nodes(args):
+    reg = nodes_load()
+    op = args.op
+
+    if op in (None, 'list'):
+        if not reg['nodes']:
+            print('no nodes registered. add one:')
+            print('  jorm nodes add c510 http://jorm-c510.local --token <token>')
+            return
+        for name in sorted(reg['nodes']):
+            e = reg['nodes'][name]
+            mark = '*' if name == reg.get('default') else ' '
+            print('%s %-12s %-30s %s' % (mark, name, e['url'],
+                                         'token saved' if e.get('token') else 'NO TOKEN'))
+        print()
+        print('  * = default · %s' % nodes_path())
+        return
+
+    if op == 'add':
+        if not args.name or not args.node_url:
+            sys.exit('jorm nodes add <name> <url> [--token T]')
+        reg['nodes'][args.name] = {'url': args.node_url.rstrip('/'),
+                                   'token': args.token or ''}
+        if not reg.get('default'):
+            reg['default'] = args.name
+        nodes_save(reg)
+        print('added %s -> %s%s' % (args.name, args.node_url,
+                                    '' if args.token else '  (no token — pass --token)'))
+        return
+
+    if op == 'rm':
+        if reg['nodes'].pop(args.name, None) is None:
+            sys.exit('jorm: no node named "%s"' % args.name)
+        if reg.get('default') == args.name:
+            reg['default'] = next(iter(sorted(reg['nodes'])), None)
+        nodes_save(reg)
+        print('removed', args.name)
+        return
+
+    if op == 'use':
+        if args.name not in reg['nodes']:
+            sys.exit('jorm: no node named "%s"' % args.name)
+        reg['default'] = args.name
+        nodes_save(reg)
+        print('default node is now', args.name)
+        return
+
+    sys.exit('jorm nodes [list | add <name> <url> | rm <name> | use <name>]')
 
 
 def request(args, method, path, body=None, raw=False):
@@ -125,7 +236,58 @@ def cmd_rm(args):
 
 
 def cmd_console(args):
-    print_lines(request(args, 'GET', '/api/guests/%s/console?n=%d' % (args.id, args.n))['lines'])
+    """Tail a guest's console — or attach to it.
+
+    The node has taken console input since hal.console.input() landed, but this
+    CLI could only ever watch a guest talk. A console you can only read is a log,
+    which is the thing we already refused once in the UI; refusing it here too.
+    """
+    if not args.attach:
+        print_lines(request(args, 'GET', '/api/guests/%s/console?n=%d'
+                            % (args.id, args.n))['lines'])
+        return
+
+    import threading
+
+    detail = request(args, 'GET', '/api/guests/%s' % args.id)
+    if detail['state'] != 'running':
+        sys.exit('jorm: guest "%s" is %s — nothing is listening' % (args.id, detail['state']))
+    deaf = not detail.get('reads_input')
+
+    sock = ws_connect(args.url, '/api/guests/%s/console/stream' % args.id, args.token)
+    print('— attached to %s%s. ctrl-c to detach —'
+          % (args.id, '' if not deaf else ' (it reads no input: hal.console.input())'))
+
+    def pump():
+        try:
+            while True:
+                line = json.loads(ws_recv_text(sock))
+                print_lines([line])
+        except (EOFError, OSError, ValueError):
+            pass
+
+    t = threading.Thread(target=pump, daemon=True)
+    t.start()
+    try:
+        for line in sys.stdin:
+            line = line.rstrip('\n')
+            if deaf:
+                print('  (this guest reads no input)')
+                continue
+            request(args, 'POST', '/api/guests/%s/console' % args.id, {'line': line})
+        # Piped stdin ends the instant the last line is sent — but the guest has
+        # not answered yet. Detaching here would hang up on the reply we asked
+        # for, which is the one thing an attached console must not do.
+        if not sys.stdin.isatty():
+            time.sleep(1.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    print('— detached —')
 
 
 # -- a minimal WebSocket client (stdlib only) for the bus bridge --------------
@@ -147,9 +309,42 @@ def ws_connect(url, path, token):
         if not chunk:
             sys.exit('jorm: connection closed during WS handshake')
         buf += chunk
-    if b' 101 ' not in buf.split(b'\r\n', 1)[0]:
-        sys.exit('jorm: WS upgrade refused: %s' % buf.split(b'\r\n', 1)[0].decode())
-    return sock
+    head, _, rest = buf.partition(b'\r\n\r\n')
+    if b' 101 ' not in head.split(b'\r\n', 1)[0]:
+        sys.exit('jorm: WS upgrade refused: %s' % head.split(b'\r\n', 1)[0].decode())
+    # Whatever followed the blank line is already WebSocket. A server that answers
+    # immediately — a console replaying its history, say — puts the first frames in
+    # the same TCP segment as the handshake, and discarding them leaves the reader
+    # starting mid-frame, which it then misparses as a CLOSE. /api/bus never showed
+    # this because its first frame arrives in a packet of its own.
+    return WebSock(sock, rest)
+
+
+class WebSock:
+    """A socket that remembers what it read too early."""
+
+    def __init__(self, sock, buf=b''):
+        self.sock = sock
+        self.buf = buf
+
+    def read(self, n):
+        data = self.buf[:n]
+        self.buf = self.buf[len(data):]
+        while len(data) < n:
+            chunk = self.sock.recv(n - len(data))
+            if not chunk:
+                raise EOFError
+            data += chunk
+        return data
+
+    def sendall(self, data):
+        self.sock.sendall(data)
+
+    def settimeout(self, t):
+        self.sock.settimeout(t)
+
+    def close(self):
+        self.sock.close()
 
 
 def ws_send_text(sock, text):
@@ -170,14 +365,7 @@ def ws_send_text(sock, text):
 
 
 def ws_recv_text(sock):
-    def read(n):
-        data = b''
-        while len(data) < n:
-            chunk = sock.recv(n - len(data))
-            if not chunk:
-                raise EOFError
-            data += chunk
-        return data
+    read = sock.read
     while True:
         head = read(2)
         opcode, n = head[0] & 0x0F, head[1] & 0x7F
@@ -321,6 +509,7 @@ def main():
     parser = argparse.ArgumentParser(prog='jorm', description=__doc__)
     parser.add_argument('--url', default=DEFAULT_URL)
     parser.add_argument('--token', default=os.environ.get('JORM_TOKEN', ''))
+    parser.add_argument('-n', '--node', help='a registered node (see: jorm nodes)')
     sub = parser.add_subparsers(dest='cmd', required=True)
 
     sub.add_parser('node', help='node info: board, heap, uptime')
@@ -339,15 +528,25 @@ def main():
     p = sub.add_parser('config', help="get/set a guest's configuration")
     p.add_argument('id')
     p.add_argument('set', nargs='*', metavar='key=value')
-    p = sub.add_parser('console', help="a guest's console ring")
+    p = sub.add_parser('console', help="a guest's console (-a to attach and type into it)")
     p.add_argument('id')
     p.add_argument('-n', type=int, default=50)
+    p.add_argument('-a', '--attach', action='store_true',
+                   help='stream it live, and type lines into the guest')
     p = sub.add_parser('lib', help='the shared library store')
     p.add_argument('--install', metavar='FILE.py')
     p.add_argument('--force', action='store_true')
-    p = sub.add_parser('shell', help='drop into the node shell (geas; needs node)')
+    p = sub.add_parser('shell',
+                      help='drop into the node shell — geas (use -n to pick a board)')
     p.add_argument('-c', dest='command', nargs=argparse.REMAINDER,
                    help='run one command and exit')
+    p = sub.add_parser('nodes', help='the boards you manage (add · rm · use · list)')
+    p.add_argument('op', nargs='?', choices=['list', 'add', 'rm', 'use'])
+    p.add_argument('name', nargs='?')
+    p.add_argument('node_url', nargs='?', metavar='URL')
+    # --token is a global flag, so it cannot follow a subcommand; `nodes add`
+    # needs its own, which is where anyone would naturally type it anyway
+    p.add_argument('--token', default=os.environ.get('JORM_TOKEN', ''))
     sub.add_parser('claims', help='the claims table')
     p = sub.add_parser('bus', help='watch bus traffic live (WS bridge)')
     p.add_argument('filters', nargs='*', help="topic filters (default: '#')")
@@ -359,8 +558,15 @@ def main():
     sub.add_parser('retained', help='the retained message table')
 
     args = parser.parse_args()
+
+    if args.cmd == 'nodes':
+        return cmd_nodes(args)
+
+    args.url, args.token = resolve_node(args)
     if not args.token:
-        sys.exit('jorm: no token (set JORM_TOKEN or pass --token)')
+        sys.exit('jorm: no token for %s.\n'
+                 '      register the node once — jorm nodes add <name> <url> --token <t>\n'
+                 '      or pass --token / set JORM_TOKEN.' % args.url)
     globals()['cmd_' + args.cmd](args)
 
 
