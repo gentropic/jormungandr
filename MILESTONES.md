@@ -71,12 +71,35 @@ WDT resets it → it comes back reachable with the culprit named from RTC memory
 autostart disabled, and a sleeping bystander guest *not* blamed.
 **Acceptance**: all four suites green against the board; the drill names the right guest.
 
+**Status: DONE.** `tools/accept-drill.sh`, on `jorm-c510`, 2026-07-13:
+
+```
+watchdog reset: guest "hog" held the CPU — autostart disabled
+```
+
+The node starved (heartbeat, flagging, and web server all dead), the hardware
+watchdog reset it, it came back on its own, named the culprit from the RTC
+register that survived the reset, benched it — and did **not** blame `blinky`,
+which slept through the whole thing. Under the spec's original stalest-`last_yield`
+heuristic, the sleeping bystander is precisely who would have been accused.
+
 **Status: board is up.** `jorm-c510` runs on an ESP32-S3 N16R8 (MicroPython 1.28.0,
 SPIRAM_OCT — 8.3 MB free heap), reachable at `http://jorm-c510.local` (mDNS works;
 `network.hostname()` registers the responder). All four suites pass on silicon.
 `examples/beacon` drives the devkit's RGB LED on GPIO48 as the node's own status
 light — green breathing on `$sys/clock/tick`, red when any guest crashes. **The
 ungovernable-guest WDT drill is the one item left in zero.**
+
+## Where zero stands
+
+M1 ✓ · M2 ✓ · M3 ✓ · M5 ✓ (silicon, incl. the drill). **M4 (USB) is the last
+milestone in zero**, and it is the only one that has not been started.
+
+Beyond the milestones, zero also grew what the founding spec promised but did not
+schedule: the `/lib` store and three-tier imports, supervisor OTA with
+health-check rollback, NTP, sampled per-guest memory, an `rgb` capability, and a
+UI that works on a phone. All of it is verified by `tools/accept-*.sh` +
+`tools/verify-ui.mjs`, against the sim and against the board.
 
 ## Later (v1-shaped, out of zero)
 
