@@ -189,6 +189,23 @@ replay counter must ride behind a per-boot **session id**, or a rebooted leaf (c
 back to 1) is rejected forever by the gateway's remembered high-water. A leaf also
 re-announces on an interval, so a rebooted *gateway* recovers the roster on its own.
 
-**Not yet built:** fragment-level retransmit (today a lost fragment drops the whole
-message to the reassembly TTL; per-frame ACK-retry covers most losses), cross-session
-replay hardening (a persistent counter), multi-hop relay, and BLE.
+**Fragment retransmit (§4): built and proven off-radio.** Per-frame ACK-retry (in
+`send`) covers a frame the radio never accepted; it can't see a frame that ACKed and
+was then dropped, which the sender never learns about. So the receiver drives recovery:
+when a message sits incomplete past a short gap, it NAKs exactly the missing fragment
+indices; the sender keeps a message's frames briefly and resends just those; a few
+tries, then the reaper drops it and the app-level req/result retries the whole command.
+Both endpoints send and receive, so it is symmetric and lives entirely in the transport.
+A real link drops fragments when it feels like it, not when a test needs it to — so the
+proof is a faked, deliberately-lossy radio (`tools/frag_test.py`, 12 checks): a clean
+link NAKs nothing, an eaten fragment is recovered through a NAK, several eaten fragments
+all recover, a permanently-lost fragment is given up on (bounded NAKs, not forever), a
+single frame needs no buffer, and a verbatim replay is still rejected. Mixed old/new is
+safe: an old node ignores a NAK frame as non-`T_MSG`, so the pair degrades to
+no-retransmit rather than breaking.
+
+**Not yet built:** re-scan on a quiet link (a leaf locks its channel at discovery and
+does not re-scan, so it is stranded if the gateway's WiFi channel roams — observed with
+a mesh AP moving the gateway across channels; the natural fix mirrors the WiFi leaf's
+keepalive: notice no ACKs for N seconds, re-scan, re-pin), cross-session replay
+hardening (a persistent counter), multi-hop relay, and BLE.

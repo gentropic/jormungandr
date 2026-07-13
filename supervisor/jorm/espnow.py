@@ -32,7 +32,12 @@ _REASM_TTL_MS = 4000
 _SEND_TRIES = 4
 
 T_MSG = 1               # a sealed, possibly-fragmented bus message
-T_HELLO = 2             # discovery (gateway -> broadcast), a later slice
+T_HELLO = 2             # discovery (gateway -> broadcast)
+T_NAK = 3               # "resend these fragments of msg_id" (receiver -> sender)
+
+_SENT_TTL_MS = 4000     # how long a sender keeps fragments around to answer a NAK
+_NAK_AFTER_MS = 300     # how long a receiver waits for a gap before asking
+_NAK_TRIES = 4
 
 
 class EspNowLink:
@@ -51,6 +56,11 @@ class EspNowLink:
         self._session = os.urandom(4)
         self._tx_ctr = {}         # mac -> next outbound counter (this session)
         self._rx = {}             # mac -> (peer session, highest counter seen)
+        # Fragment retransmit: a sender keeps a message's frames briefly so it can
+        # answer a receiver's NAK ("resend fragment N"); a background loop on the
+        # receiver side asks for gaps. Lazily started on first recv().
+        self._sent = {}           # (mac, msg_id) -> {'frames': [...], 't'}
+        self._nak_task = None
 
     def mac(self):
         return network.WLAN(network.STA_IF).config('mac')
@@ -115,29 +125,42 @@ class EspNowLink:
         count = (len(blob) + _MAXFRAG - 1) // _MAXFRAG
         mid = self._next_id & 0xFFFF
         self._next_id += 1
+        frames = [bytes([T_MSG, mid & 0xFF, (mid >> 8) & 0xFF, i, count])
+                  + blob[i * _MAXFRAG:(i + 1) * _MAXFRAG] for i in range(count)]
+        # Keep the frames so a NAK can pull single fragments back (only worth it for a
+        # multi-frame message; a single frame either ACKs here or is lost outright).
+        if count > 1:
+            self._sent[(bytes(mac), mid)] = {'frames': frames, 't': time.ticks_ms()}
+            self._reap()
         all_acked = True
-        for i in range(count):
-            frag = blob[i * _MAXFRAG:(i + 1) * _MAXFRAG]
-            frame = bytes([T_MSG, mid & 0xFF, (mid >> 8) & 0xFF, i, count]) + frag
-            acked = False
-            for _ in range(_SEND_TRIES):
-                try:
-                    acked = await self.e.asend(mac, frame, True)
-                except OSError:
-                    acked = False
-                if acked:
-                    break
-                await asyncio.sleep_ms(20)
-            all_acked = all_acked and acked
+        for frame in frames:
+            all_acked = await self._send_frame(mac, frame) and all_acked
         return all_acked
+
+    async def _send_frame(self, mac, frame):
+        for _ in range(_SEND_TRIES):
+            try:
+                if await self.e.asend(mac, frame, True):
+                    return True
+            except OSError:
+                pass
+            await asyncio.sleep_ms(20)
+        return False
 
     # -- receive ------------------------------------------------------------
 
     async def recv(self):
         """Await the next complete, authentic, non-replayed message: (mac, text)."""
+        if self._nak_task is None:
+            self._nak_task = asyncio.create_task(self._nak_loop())
         while True:
             mac, frame = await self.e.arecv()
-            if not frame or len(frame) < _HDR or frame[0] != T_MSG:
+            if not frame or len(frame) < 2:
+                continue
+            if frame[0] == T_NAK:
+                await self._answer_nak(bytes(mac), frame)
+                continue
+            if len(frame) < _HDR or frame[0] != T_MSG:
                 continue
             mid = frame[1] | (frame[2] << 8)
             idx, count = frame[3], frame[4]
@@ -146,9 +169,12 @@ class EspNowLink:
             key = (bytes(mac), mid)
             slot = self._reasm.get(key)
             if slot is None or slot['count'] != count:
-                slot = {'count': count, 'frags': {}, 't': time.ticks_ms()}
+                # 'nak_t'/'naks' pace the retransmit asks; 't' paces reap (last progress)
+                slot = {'count': count, 'frags': {}, 't': time.ticks_ms(),
+                        'nak_t': time.ticks_ms(), 'naks': 0}
                 self._reasm[key] = slot
             slot['frags'][idx] = frame[_HDR:]
+            slot['t'] = time.ticks_ms()
             self._reap()
             if len(slot['frags']) != count:
                 continue
@@ -166,8 +192,55 @@ class EspNowLink:
             self._rx[m] = (session, ctr)
             return m, pt[12:].decode()
 
+    # -- fragment retransmit ------------------------------------------------
+
+    async def _nak_loop(self):
+        """Ask a sender to resend the fragments a message is still missing.
+
+        Per-frame ACK-retry (in send) covers a frame the radio never accepted; this
+        covers the rest — a frame that ACKed but was dropped, or lost while our radio
+        was elsewhere — which the sender otherwise never learns about. When a slot has
+        sat with a gap for a beat, NAK exactly the missing indices; a few times, then
+        let the reaper drop it (the app-level req/result retries the whole command)."""
+        while True:
+            await asyncio.sleep_ms(_NAK_AFTER_MS)
+            now = time.ticks_ms()
+            for (mac, mid), slot in list(self._reasm.items()):
+                if time.ticks_diff(now, slot['nak_t']) < _NAK_AFTER_MS:
+                    continue
+                if slot['naks'] >= _NAK_TRIES:
+                    continue
+                missing = [i for i in range(slot['count']) if i not in slot['frags']]
+                if not missing:
+                    continue
+                slot['nak_t'] = now
+                slot['naks'] += 1
+                nak = bytes([T_NAK, mid & 0xFF, (mid >> 8) & 0xFF, len(missing)]) \
+                    + bytes(missing)
+                try:
+                    await self.e.asend(mac, nak, False)
+                except OSError:
+                    pass
+
+    async def _answer_nak(self, mac, frame):
+        """A receiver asked for fragments of a message we sent — resend just those."""
+        if len(frame) < 4:
+            return
+        mid = frame[1] | (frame[2] << 8)
+        want = frame[4:4 + frame[3]]
+        slot = self._sent.get((mac, mid))
+        if slot is None:
+            return                 # already reaped, or never ours
+        frames = slot['frames']
+        for i in want:
+            if i < len(frames):
+                await self._send_frame(mac, frames[i])
+
     def _reap(self):
         now = time.ticks_ms()
         for k in list(self._reasm):
             if time.ticks_diff(now, self._reasm[k]['t']) > _REASM_TTL_MS:
                 del self._reasm[k]   # a lost fragment must not pin memory
+        for k in list(self._sent):
+            if time.ticks_diff(now, self._sent[k]['t']) > _SENT_TTL_MS:
+                del self._sent[k]    # past answering a NAK; let it go
