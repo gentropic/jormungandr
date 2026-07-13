@@ -36,6 +36,7 @@ async def run(hal):
     hal.spawn(on_cfg())
 
     t = 0.0
+    n = 0
     try:
         while True:
             if st['on']:
@@ -44,8 +45,12 @@ async def run(hal):
             else:
                 duty = 0
             pwm.duty(duty)
-            hal.bus.publish('pulse/duty', {'duty': duty}, retain=True)
-            hal.status('duty %d' % duty)
+            # the LED breathes at 20 Hz; the bus hears about it at 5. A guest that
+            # narrates every step of a smooth curve is just a guest flooding a bus.
+            n += 1
+            if n % 4 == 0:
+                hal.bus.publish('pulse/duty', {'duty': duty}, retain=True)
+                hal.status('duty %d' % duty)
             await hal.sleep_ms(50)
             t += 0.05
     finally:

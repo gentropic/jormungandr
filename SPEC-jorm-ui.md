@@ -81,6 +81,27 @@ The jormungandr spec's "amber" reads as Switchboard **caution** (hue-honest: yel
 - Served with `Cache-Control` friendly headers later; token entered once, kept in
   localStorage keyed by node URL; the WS uses `?token=` (browsers can't set headers).
 
+## 4b. Phones and pointers (ratified 2026-07-13)
+
+- **The tree becomes a drawer**, not a squashed column: on a phone you navigate,
+  then read. ☰ opens it, a scrim dismisses it, selecting closes it. The masthead
+  sits *above* the drawer — an open drawer that covers the button which closes it
+  is a trap, and a 390px viewport found that one the moment it was asked to. The
+  drawer's offset is *measured* from the masthead (which wraps to two rows on a
+  phone), never guessed.
+- **Switchboard's 44px tap floor is a floor** (`pointer: coarse`), applied to tree
+  rows, tabs, buttons, and menu items.
+- **Context menus, because Proxmox is a right-click program.** Right-click (or
+  long-press — a phone has no right button, but it is the same gesture) on the
+  node or any guest. Guest menus are state-aware: Start is disabled on a running
+  guest, Remove on anything that isn't stopped. Destructive items **arm rather
+  than ask** — one more deliberate click on a control that has visibly changed its
+  mind about what it does. Escape closes. Menus are surface-bright + 1px border:
+  depth from the surface register, never a drop shadow.
+- **The bus monitor confesses its own drops.** A browser that falls behind loses
+  its own messages (spec §5) — and is told so, in caution, because a monitor that
+  quietly drops is a monitor that lies about what the bus carried.
+
 ## 5. Decisions (ratified 2026-07-12, against mock zero)
 
 1. **Masthead carries link + tick**; drop counters live in the node Summary readout,

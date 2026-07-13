@@ -384,14 +384,28 @@ def create_app(node, sup):
     @app.route('/api/bus')
     @with_websocket
     async def api_bus_ws(req, ws):
-        sub = sup.bus.subscribe([], qlen=64, owner='ws')
+        # A browser on a LAN can keep up with a few hundred messages a second;
+        # 64 was a guest's budget, not a monitor's.
+        sub = sup.bus.subscribe([], qlen=256, owner='ws')
 
         async def sender():
             while True:
                 topic, enc = await sub.get()
                 await ws.send('{"topic": %s, "msg": %s}' % (json.dumps(topic), enc))
 
+        async def drops():
+            # A monitor that quietly drops is a monitor that lies about what the
+            # bus carried. The node never starves for a slow browser (spec §5) —
+            # but the browser has to be told that it is the one falling behind.
+            last = 0
+            while True:
+                await asyncio.sleep(2)
+                if sub.drops != last:
+                    last = sub.drops
+                    await ws.send('{"drops": %d}' % last)
+
         task = asyncio.create_task(sender())
+        dtask = asyncio.create_task(drops())
         try:
             while True:
                 try:
@@ -414,6 +428,7 @@ def create_app(node, sup):
                     await ws.send('{"error": "unknown op"}')
         finally:
             task.cancel()
+            dtask.cancel()
             sup.bus.unsubscribe(sub)
 
     def _n(req):

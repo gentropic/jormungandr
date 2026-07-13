@@ -216,27 +216,90 @@ input[type=range] { accent-color:var(--au-action); width:100%; }
 .wtext { font:400 .74rem/1.5 var(--au-font-mono); white-space:pre-wrap; }
 .wind { font:700 .9rem var(--au-font-mono); }
 
-@media (prefers-reduced-motion: reduce) { .btn { transition:none; } }
+/* context menu (Switchboard: depth is surface register + 1px border, never a
+   drop shadow — a popup that looks like Material wandered in is the wrong popup) */
+.menu { position:fixed; z-index:1300; min-width:12.5rem; padding:.25rem;
+  background:var(--au-surface-bright); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); }
+.menu button { display:flex; align-items:center; gap:.6rem; width:100%; text-align:left;
+  font:400 .8rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
+  border-radius:var(--au-radius); padding:.4rem .55rem; cursor:pointer; }
+.menu button:hover:not(:disabled) { background:var(--au-selected-soft); color:var(--au-selected); }
+.menu button:disabled { opacity:.4; cursor:not-allowed; }
+.menu button.danger { color:var(--au-error); }
+.menu button.danger:hover:not(:disabled) { background:var(--au-error-soft); color:var(--au-error); }
+.menu button.armed { background:var(--au-error-soft); color:var(--au-error); }
+.menu button .mg { width:1.1em; text-align:center; color:var(--au-fg-soft); }
+.menu button:hover:not(:disabled) .mg { color:inherit; }
+.menu .msep { height:1px; margin:.25rem .3rem; background:var(--au-border-soft); }
+.menu .mhead { font:400 .62rem var(--au-font-mono); letter-spacing:.18em; text-transform:uppercase;
+  color:var(--au-fg-soft); padding:.35rem .55rem .25rem; }
+.backdrop { position:fixed; inset:0; z-index:1250; }
+
+/* the drawer's scrim: tap anywhere off the tree to dismiss it */
+.scrim { position:fixed; inset:0; z-index:1140; background:var(--au-surface-deep);
+  opacity:0; pointer-events:none; transition:opacity var(--au-dur) var(--au-ease); }
+.app.drawer .scrim { opacity:.55; pointer-events:auto; }
+
+/* drawer trigger — desktop never sees it */
+#drawerbtn { display:none; }
+
+@media (prefers-reduced-motion: reduce) { .btn, .tree { transition:none; } }
+
+/* ── phones ──────────────────────────────────────────────────────────────
+   The tree becomes a drawer rather than a squashed column: a resource tree is
+   for navigating, and on a phone you navigate then read. Selecting closes it. */
 @media (max-width: 760px) {
-  .cols { flex-direction:column; }
-  .tree { width:auto; border-right:none; border-bottom:1px solid var(--au-border);
-    display:flex; flex-wrap:wrap; gap:.1rem; padding:.3rem; }
-  .tree .sect { width:100%; }
-  .trow, .trow.g { padding:.3rem .6rem; width:auto; border-left:none; border-radius:var(--au-radius); }
-  .trow.sel { border-left:none; }
+  #drawerbtn { display:inline-block; order:-1; }
+  .mast { gap:.6rem .8rem; padding:.5rem .7rem; }
+  .brand .kana { display:none; }
+  .mast-gauges { gap:.8rem; width:100%; margin-left:0; overflow-x:auto; }
+  .mgauge.wide { display:none; }        /* uptime is the first thing a phone can spare */
+  .content { padding:0 .7rem 1.5rem; }
+  .tabs { margin:0 -.7rem 1rem; padding:0 .7rem; overflow-x:auto; }
+  .tab { padding:.6rem .55rem .5rem; }
+
+  /* The masthead sits ABOVE the drawer, or an open drawer covers the very button
+     that closes it — which a 390px viewport found the moment it was asked to. */
+  .mast { position:sticky; top:0; z-index:1200; }
+  /* below the masthead — whose height depends on how many gauges wrapped, so it
+     is measured, not guessed. A guessed offset hid the top of the tree. */
+  .tree {
+    position:fixed; top:var(--mast-h, 3.2rem); bottom:0; left:0; width:16rem; z-index:1150;
+    transform:translateX(-100%); transition:transform var(--au-dur) var(--au-ease);
+    overflow-y:auto; border-right:1px solid var(--au-border); padding-top:.5rem;
+  }
+  .scrim { top:var(--mast-h, 3.2rem); }
+  .tree.open { transform:translateX(0); }
+  .grid { grid-template-columns:1fr; }
+  .kv { grid-template-columns:1fr; gap:.05rem .9rem; }
+  .kv dt { padding-top:.4rem; }
+  table.cl { font-size:.72rem; }
+  .panel-bd, .readout-bd { overflow-x:auto; }
+  .busbar input { flex:1; min-width:6rem; }
+}
+
+/* Touch: Switchboard's floor is 44px, and it is a floor, not a suggestion. */
+@media (pointer: coarse) {
+  .trow, .trow.g { min-height:var(--au-tap); }
+  .menu button { min-height:var(--au-tap); }
+  .tab { min-height:var(--au-tap); }
+  .btn { min-height:var(--au-tap); padding:.5rem 1rem; }
+  .tw { min-width:1.6em; }
 }
 </style>
 </head>
 <body>
 <div class="app" id="app">
   <header class="mast">
+    <button class="btn ghost" id="drawerbtn" title="resources" aria-label="resources">☰</button>
     <span class="brand"><b>JORMUNGANDR</b><span class="kana">ヨルムンガンド</span></span>
     <span class="hostchip" id="hostchip">…</span>
     <span class="mast-gauges" id="mastg" hidden>
       <span class="mgauge"><span class="lbl">Heap free</span>
         <span class="val"><span id="heapval">—</span>
           <svg class="spark" id="sp-heap" width="72" height="22" viewBox="0 0 72 22"></svg></span></span>
-      <span class="mgauge"><span class="lbl">Uptime</span><span class="val" id="upval">—</span></span>
+      <span class="mgauge wide"><span class="lbl">Uptime</span><span class="val" id="upval">—</span></span>
       <span class="mgauge"><span class="lbl">Guests</span><span class="val" id="gval">—</span></span>
       <span class="mgauge"><span class="lbl">Link · Tick</span>
         <span class="val"><span id="link" class="down">◉</span><span id="tick">◉</span></span></span>
@@ -247,6 +310,7 @@ input[type=range] { accent-color:var(--au-action); width:100%; }
     </span>
   </header>
   <div class="stalebar">⚠ signal lost — <span id="stalesecs">last data ? s ago</span> · reconnecting…</div>
+  <div class="scrim" id="scrim"></div>
   <div class="cols" id="cols">
     <nav class="tree" id="tree"></nav>
     <main class="content" id="main"></main>
@@ -268,7 +332,7 @@ const S = {
   ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
   conWS: null, logTimer: null, busPaused: false,
   panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
-  clockOk: true, temp: null,
+  clockOk: true, temp: null, drops: 0,
   open: { dc: true, node: true },
 };
 try {
@@ -289,6 +353,139 @@ async function api(method, path, body) {
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || (resp.status + ''));
   return data;
+}
+
+// ── context menus ─────────────────────────────────────────────────────────
+// Proxmox is a right-click program. On a phone there is no right button, so a
+// long press is the same gesture — the menu is the same menu either way.
+function closeMenu() {
+  const m = $('#menu'), b = $('#backdrop');
+  if (m) m.remove();
+  if (b) b.remove();
+}
+
+function openMenu(x, y, title, items) {
+  closeMenu();
+  const back = document.createElement('div');
+  back.className = 'backdrop';
+  back.id = 'backdrop';
+  back.onclick = closeMenu;
+  back.oncontextmenu = ev => { ev.preventDefault(); closeMenu(); };
+  document.body.appendChild(back);
+
+  const menu = document.createElement('div');
+  menu.className = 'menu';
+  menu.id = 'menu';
+  if (title) {
+    const h = document.createElement('div');
+    h.className = 'mhead';
+    h.textContent = title;
+    menu.appendChild(h);
+  }
+  for (const item of items) {
+    if (item === '-') {
+      const sep = document.createElement('div');
+      sep.className = 'msep';
+      menu.appendChild(sep);
+      continue;
+    }
+    const b = document.createElement('button');
+    b.className = item.danger ? 'danger' : '';
+    b.disabled = !!item.disabled;
+    b.innerHTML = `<span class="mg">${esc(item.glyph || '')}</span>${esc(item.label)}`;
+    b.onclick = () => {
+      // Destructive actions arm rather than ask: one more deliberate click on a
+      // control that has visibly changed its mind about what it does.
+      if (item.confirm && b.dataset.armed !== '1') {
+        b.dataset.armed = '1';
+        b.classList.add('armed');
+        b.innerHTML = `<span class="mg">⚠</span>${esc(item.confirm)}`;
+        return;
+      }
+      closeMenu();
+      item.run();
+    };
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+
+  // keep it on screen — a menu that opens off the bottom of a phone is no menu
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 6)) + 'px';
+  menu.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 6)) + 'px';
+}
+
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
+
+function nodeMenu(x, y) {
+  const url = S.base;
+  openMenu(x, y, S.node ? S.node.hostname : 'node', [
+    { glyph: '◫', label: 'Summary', run: () => { select(null); setTab('summary'); } },
+    { glyph: '⇅', label: 'Bus monitor', run: () => { select(null); setTab('bus'); } },
+    { glyph: '⊞', label: 'Claims', run: () => { select(null); setTab('claims'); } },
+    { glyph: '≡', label: 'Log', run: () => { select(null); setTab('log'); } },
+    '-',
+    { glyph: '↻', label: 'Reboot node', danger: true, confirm: 'Reboot — sure?',
+      run: async () => {
+        try { await api('POST', '/api/node/reboot'); toast('rebooting ' + S.node.hostname); }
+        catch (e) { toast('reboot: ' + e.message, 'fault'); }
+      } },
+    { glyph: '⚙', label: 'Maintenance mode', danger: true, confirm: 'Drop to the REPL?',
+      run: async () => {
+        try {
+          await api('POST', '/api/node/maintenance');
+          toast('rebooting into maintenance — the node will be off the network', 'fault');
+        } catch (e) { toast('maintenance: ' + e.message, 'fault'); }
+      } },
+    '-',
+    { glyph: '⧉', label: 'Copy node URL', run: () => {
+        navigator.clipboard && navigator.clipboard.writeText(url);
+        toast('copied ' + url);
+      } },
+  ]);
+}
+
+function guestMenu(x, y, id) {
+  const g = S.guests[id];
+  if (!g) return;
+  const live = g.state === 'running' || g.state === 'unresponsive';
+  const act = async verb => {
+    try { await api('POST', `/api/guests/${id}/${verb}`); }
+    catch (e) { toast(`${verb} ${id}: ${e.message}`, 'fault'); }
+  };
+  openMenu(x, y, `${g.num || '—'} (${id})`, [
+    { glyph: '▶', label: 'Start', disabled: live, run: () => act('start') },
+    { glyph: '■', label: 'Stop', disabled: !live, run: () => act('stop') },
+    { glyph: '↻', label: 'Restart', run: () => act('restart') },
+    '-',
+    { glyph: '◫', label: 'Overview', run: () => { select(id); setTab('overview'); } },
+    { glyph: '≡', label: 'Console', run: () => { select(id); setTab('console'); } },
+    { glyph: '⚙', label: 'Config', run: () => { select(id); setTab('config'); } },
+    '-',
+    { glyph: '✗', label: 'Remove', danger: true, disabled: live,
+      confirm: `Remove ${id} — for good?`,
+      run: async () => {
+        try {
+          await api('DELETE', '/api/guests/' + id);
+          if (S.sel === id) select(null);
+          toast('removed ' + id);
+          refresh();
+        } catch (e) { toast('remove: ' + e.message, 'fault'); }
+      } },
+  ]);
+}
+
+// long-press is the phone's right-click
+function armLongPress(el, open) {
+  let timer = null;
+  el.addEventListener('touchstart', ev => {
+    const t = ev.touches[0];
+    timer = setTimeout(() => { timer = null; open(t.clientX, t.clientY); }, 450);
+  }, { passive: true });
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchmove', cancel);
+  el.addEventListener('touchcancel', cancel);
 }
 
 function toast(text, cls) {
@@ -345,6 +542,14 @@ function connect() {
     S.lastMsg = Date.now();
     let frame; try { frame = JSON.parse(ev.data); } catch (e) { return; }
     if (frame.topic !== undefined) route(frame.topic, frame.msg);
+    else if (frame.drops !== undefined) {
+      S.drops = frame.drops;
+      const el = $('#busdrops');
+      if (el) {
+        el.hidden = false;
+        el.textContent = `⚠ ${frame.drops} dropped — this browser fell behind`;
+      }
+    }
     else if (frame.error) toast('bus: ' + frame.error, 'fault');
   };
   ws.onclose = () => { $('#link').className = 'down'; scheduleReconnect(); };
@@ -400,6 +605,15 @@ function route(topic, msg) {
     tick.classList.add('lit');
     clearTimeout(tick._decay);
     tick._decay = setTimeout(() => tick.classList.remove('lit'), 220);
+    // An MCU has no clock until NTP lands, which is *after* a browser can connect
+    // to it. Read the flag off the tick, or the badge stays stuck at whatever was
+    // true the moment we logged in — which is exactly the kind of stale truth this
+    // interface refuses everywhere else.
+    if (msg && msg.synced !== undefined && msg.synced !== S.clockOk) {
+      S.clockOk = msg.synced;
+      $('#clockchip').hidden = msg.synced;
+      if (msg.synced) refresh();   // re-date the past, now that the node can
+    }
     renderMastGauges();
   } else if (topic === '$sys/heap' && msg) {
     S.heap.push(msg.free / 1048576);
@@ -455,6 +669,7 @@ async function refresh() {
     $('#hostchip').textContent = S.node.hostname;
     S.clockOk = !S.node.clock || S.node.clock.synced;
     $('#clockchip').hidden = S.clockOk;
+    measureMast();
     $('#mastg').hidden = false;
     renderTree(); renderMastGauges(); renderMain();
   } catch (e) {
@@ -513,21 +728,33 @@ function renderTree() {
     }
   }
   $('#tree').innerHTML = rows.join('');
-  $('#tree').querySelectorAll('.trow').forEach(row => row.onclick = ev => {
+  $('#tree').querySelectorAll('.trow').forEach(row => {
     const tw = row.dataset.tw;
-    // clicking the twisty folds; clicking the row selects
-    if (tw && ev.target.classList.contains('tw')) {
-      S.open[tw] = !S.open[tw];
-      renderTree();
-      return;
+    const id = row.dataset.id;
+    const menu = id ? (x, y) => guestMenu(x, y, id)
+      : (id === '' ? nodeMenu : null);
+
+    row.onclick = ev => {
+      // clicking the twisty folds; clicking the row selects
+      if (tw && ev.target.classList.contains('tw')) {
+        S.open[tw] = !S.open[tw];
+        renderTree();
+        return;
+      }
+      if (id !== undefined) select(id || null);
+    };
+    if (menu) {
+      row.oncontextmenu = ev => { ev.preventDefault(); menu(ev.clientX, ev.clientY); };
+      armLongPress(row, menu);
     }
-    if (row.dataset.id !== undefined) select(row.dataset.id || null);
   });
 }
 
 function select(id) {
   teardown();
   S.sel = id;
+  closeMenu();
+  drawer(false);   // on a phone: navigate, then read
   renderTree(); renderMain();
 }
 function setTab(tab) {
@@ -606,6 +833,8 @@ function renderNode(main) {
         <span class="badge info">sub #</span>
         <button class="btn secondary" id="pausebtn">${S.busPaused ? '▶ resume' : '⏸ pause'}</button>
         <span class="note">ring ${SCROLLBACK} · ▸ orange = origin: ui</span>
+        <span class="badge caution" id="busdrops" ${S.drops ? '' : 'hidden'}
+          >⚠ ${S.drops || 0} dropped — this browser fell behind</span>
         <span style="flex:1"></span>
         <input id="pubtopic" placeholder="topic" size="18">
         <input id="pubmsg" placeholder="msg (JSON)" size="16">
@@ -710,6 +939,11 @@ function renderGuest(main, id) {
 
   if (tab === 'overview') {
     main.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => act(id, btn.dataset.act, btn));
+    const hd = main.querySelector('.panel-hd');
+    if (hd) {
+      hd.oncontextmenu = ev => { ev.preventDefault(); guestMenu(ev.clientX, ev.clientY, id); };
+      armLongPress(hd, (x, y) => guestMenu(x, y, id));
+    }
     loadGuestDetail(id);
   }
   if (tab === 'console') openConsole(id);
@@ -988,6 +1222,20 @@ function renderLogin(reason) {
 }
 
 // ── boot ────────────────────────────────────────────────────────────────────
+function measureMast() {
+  document.documentElement.style.setProperty(
+    '--mast-h', $('.mast').offsetHeight + 'px');
+}
+addEventListener('resize', measureMast);
+
+function drawer(open) {
+  measureMast();
+  $('#tree').classList.toggle('open', open);
+  $('#app').classList.toggle('drawer', open);
+}
+$('#drawerbtn').onclick = () => drawer(!$('#tree').classList.contains('open'));
+$('#scrim').onclick = () => drawer(false);
+
 $('#themebtn').onclick = () => {
   const r = document.documentElement;
   r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
