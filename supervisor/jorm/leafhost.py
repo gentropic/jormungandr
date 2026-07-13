@@ -142,19 +142,88 @@ async def _uplink(node, sup):
         await asyncio.sleep(3)
 
 
+def _mac_bytes(s):
+    try:
+        return bytes(int(p, 16) for p in s.split(':'))
+    except (ValueError, AttributeError):
+        return None
+
+
+class _EspNowUplink:
+    """Present the espnow link to _push/_exec with the same send/recv a WS gives them,
+    so the guest-management logic is reused unchanged. There is only one gateway, so
+    recv drops the sender MAC."""
+
+    def __init__(self, link, gw):
+        self.link = link
+        self.gw = gw
+
+    async def send(self, text):
+        return await self.link.send(self.gw, text)
+
+    async def recv(self):
+        _mac, text = await self.link.recv()
+        return text
+
+    async def close(self):
+        pass
+
+
+async def _espnow_uplink(node, sup):
+    from jorm import guests as store
+    from jorm.espnow import EspNowLink
+    gw = _mac_bytes(node.settings.get('gateway_mac', ''))
+    if gw is None:
+        node.log.append('error', 'leaf-host: transport espnow but no gateway_mac')
+        while True:
+            await asyncio.sleep(30)
+    link = EspNowLink(node.token)
+    link.add_peer(gw)
+    ul = _EspNowUplink(link, gw)
+    myname = node.hostname
+    cmd_prefix = 'cmd/leaf/%s/' % myname
+    up_prefix = 'leaf/%s/' % myname
+    node.log.append('sys', 'leaf-host: espnow uplink to %s' % node.settings.get('gateway_mac'))
+
+    # ESP-NOW is connectionless — there is no socket to drop, so no reconnect loop and
+    # no keepalive; a send just fails (ACK False) while the gateway is away and starts
+    # working again when it returns.
+    await ul.send(json.dumps({'op': 'sub', 'filters': [cmd_prefix + '#']}))
+    await ul.send(json.dumps({
+        'op': 'pub', 'retain': True, 'topic': '$sys/leaf/' + myname,
+        'msg': {'name': myname, 'board': node.board_name(),
+                'hosts_guests': True, 'transport': 'espnow'}}))
+    sub = sup.bus.subscribe(['#', '$sys/guest/#'], qlen=64, owner='uplink')
+    for g in sup.guests.values():
+        sup.sys_publish('$sys/guest/%s/state' % g.id, {'state': g.state}, retain=True)
+    asyncio.create_task(_push(ul, sub, up_prefix))
+    while True:
+        try:
+            text = await ul.recv()
+            frame = json.loads(text)
+        except (ValueError, OSError):
+            continue
+        topic = frame.get('topic', '')
+        if topic.startswith(cmd_prefix):
+            await _exec(node, sup, store, ul, topic[len(cmd_prefix):],
+                        frame.get('msg') or {}, up_prefix)
+
+
 def run_leaf_host(node):
     from jorm.supervisor import Supervisor
     sup = Supervisor(node)
     sup.blame_check()          # honor a watchdog reset: name and bench the culprit
     sup.scan()
     sup.install_import_guard()
+    espnow = node.settings.get('transport') == 'espnow'
 
     async def _amain():
-        from jorm.netwatch import wifi_watch
-        asyncio.create_task(wifi_watch(node))   # re-associate a dropped link
-        asyncio.create_task(sup.heartbeat())    # WDT + runaway detection (the point)
-        asyncio.create_task(sup.telemetry())    # heap/temp on the local bus
-        asyncio.create_task(_uplink(node, sup))
+        if not espnow:
+            from jorm.netwatch import wifi_watch
+            asyncio.create_task(wifi_watch(node))   # re-associate a dropped link
+        asyncio.create_task(sup.heartbeat())        # WDT + runaway detection
+        asyncio.create_task(sup.telemetry())        # heap/temp on the local bus
+        asyncio.create_task(_espnow_uplink(node, sup) if espnow else _uplink(node, sup))
         await sup.autostart()
         node.log.append('sys', 'leaf-host: %d guest(s) installed, hosting locally'
                         % len(sup.guests))

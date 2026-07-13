@@ -162,10 +162,23 @@ leaf is "WiFi or ESP-NOW" by settings, not by a different program.
 
 ## Status
 
-**Probed (incl. a live board-to-board encrypted exchange), specced, not yet built.**
-Silicon facts in §0 are measured. The first slice:
-a `jorm/espnow.py` transport (framing, reassembly, retransmit, encrypted peers,
-broadcast discovery), a gateway task on the flagship, and a smart-leaf uplink that runs
-over it — proven by a real C3 leaf reaching a real S3 over ESP-NOW with the WiFi uplink
-turned off. Single-hop; fragmentation in from the start (you wanted the full bus).
-Multi-hop relay, BLE, and app-layer crypto for >6 leaves are named for later.
+**Slice 1: built and proven on silicon.** A C3 with **no WiFi association** (radio on
+the gateway's channel only) hosts `pinger` and reaches c510's bus over ESP-NOW:
+
+```
+$sys/leaf/leaf-c3 = {"transport":"espnow", ...}        # announced over the air
+espnow leaf e8:06:90:65:96:04 joined                   # gateway log
+pinger/tick {"n":322,"node":"leaf-c3"}                 # on c510's bus, no lwIP anywhere
+jorm leaf leaf-c3 stop pinger  ->  ok                  # command DOWN, result UP
+```
+
+`jorm/seal.py` (Encrypt-then-MAC, option B — uncapped, 20 checks), `jorm/espnow.py`
+(seal ‖ fragment ‖ ACK-retried send; reassemble ‖ unseal ‖ replay-check on recv),
+`jorm/gateway.py` (the flagship's ESP-NOW ↔ bus bridge, both directions), and a
+leaf-host uplink that swaps `wsclient` for the espnow link under the same push/command
+logic. Sealed AES on the air, fragmentation ready from the start, single-hop, seeded
+discovery.
+
+**Not yet built:** auto-discovery (broadcast HELLO + channel scan; today the leaf is
+seeded the gateway MAC/channel), fragment-level retransmit (today a lost fragment drops
+the whole message to the reassembly TTL), multi-hop relay, and BLE.

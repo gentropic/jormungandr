@@ -86,6 +86,30 @@ def wifi_up(node):
     node.log.append('sys', 'wifi up: %s as %s' % (node.ip, node.hostname))
 
 
+def radio_for_espnow(node):
+    # An ESP-NOW leaf never associates — it just needs the radio on the gateway's
+    # channel. Activate the STA interface, set the channel, and stop. No IP, no lwIP
+    # pressure, no WiFi at all: this is the whole point of the off-WiFi leaf.
+    import gc
+    gc.collect()
+    wlan = network.WLAN(network.STA_IF)
+    try:
+        wlan.active(False)
+        time.sleep_ms(100)
+    except OSError:
+        pass
+    wlan.active(True)
+    mac = wlan.config('mac')
+    node.mac4 = '%02x%02x' % (mac[-2], mac[-1])
+    ch = node.settings.get('gateway_channel', 11)
+    try:
+        wlan.config(channel=ch)
+    except OSError as e:
+        node.log.append('sys', 'espnow: could not set channel %d (%s)' % (ch, e))
+    node.wlan = wlan
+    node.log.append('sys', 'radio on ch %d for espnow — no wifi association' % ch)
+
+
 async def confirm_trial(node):
     """A trial boot confirms itself by *being* a healthy node (boot.py).
 
@@ -118,6 +142,9 @@ async def amain(node, sup, app):
     asyncio.create_task(sup.telemetry())
     from jorm.netwatch import wifi_watch
     asyncio.create_task(wifi_watch(node))         # re-associate a dropped link
+    if node.settings.get('gateway'):
+        from jorm.gateway import run_gateway       # ESP-NOW ↔ bus for leaves (three §1)
+        run_gateway(node, sup)
     asyncio.create_task(sup.cluster.announce())   # beacon out (one §1)
     asyncio.create_task(sup.cluster.listen())     # peers in
     asyncio.create_task(sup.bridge.run())         # pull peers' bus slices (one §4)
@@ -163,7 +190,10 @@ if held():
     print('[sys] the REPL is yours.')
 else:
     node = Node(load_settings())
-    wifi_up(node)
+    if node.settings.get('transport') == 'espnow':
+        radio_for_espnow(node)   # off-WiFi leaf: radio on the gateway's channel, no assoc
+    else:
+        wifi_up(node)
     # A leaf is a node too small to be a full node (SPEC-two): it runs no IP server,
     # so it never loads the heavy supervisor that would starve its lwIP pool. Branch
     # BEFORE importing any of it — the import is the cost, not just the running.
