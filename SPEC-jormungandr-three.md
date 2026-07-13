@@ -27,6 +27,9 @@ The design rests on these, measured on `ESP32_GENERIC_C3` v1.28.0:
   *decrypted* them (`received 3: [b'jorm-encrypted-from-S3 #0', ...]`). This is the
   whole premise, confirmed on real silicon — not just APIs that exist, but two jorm
   boards exchanging encrypted frames over the air.
+- **The primitives for app-layer crypto are present too** (for §6's uncapped path):
+  `cryptolib` AES-CBC (CTR is not compiled in this build), `hashlib.sha256`,
+  `os.urandom`; ~0.66 ms to seal a 250-byte frame.
 
 ## 1. The gateway
 
@@ -103,19 +106,43 @@ install or to skip the scan — discovery is the convenience, not the only way i
 
 ## 6. Security
 
-Encrypted on the air, authenticated at the handshake:
+There are two ways to encrypt, and they trade the same thing in opposite directions.
 
-- **Keys from the shared token.** The cluster already has one shared bearer token; the
-  ESP-NOW PMK and a per-peer LMK are derived from it (a hash), so only a node holding
-  the token can bring up an encrypted peer whose traffic the other side can read.
-- **The handshake is the soft spot, and it is handled.** Broadcast frames cannot be
-  encrypted (encryption is per-unicast-peer), so `HELLO`/`WELCOME` travel in the clear.
-  They carry no secret — they carry a **token-derived challenge/response**, so an
-  eavesdropper who hears the broadcast still cannot complete the handshake without the
-  token, and a replay is rejected by a nonce.
-- **The 6-peer cap is a security parameter too**: six encrypted leaves per gateway.
-  Beyond that, a second gateway, or (later) app-layer AES over unencrypted peers to
-  trade CPU for headcount.
+**Option A — ESP-NOW's built-in AES-CCM.** Zero code: `set_pmk` + `add_peer(lmk=…)`
+and the MAC hardware encrypts each peer's traffic (confirmed board-to-board, §0). Keys
+derive from the shared token so only a token-holder can bring a peer up. Bulletproof,
+and **capped at 6 encrypted peers per node** — the hardware key store has six slots.
+Good for a small cluster; a hard ceiling for a large one.
+
+**Option B — app-layer authenticated encryption (recommended, uncapped).** The 6-cap
+is only on the *built-in* per-peer CCM. The chip's general AES (via `cryptolib`) has no
+such limit, and *unencrypted* ESP-NOW peers go to ~20 (broadcast, unlimited). So send
+over unencrypted peers and seal the payload ourselves. Confirmed present on the C3:
+`cryptolib` AES-**CBC** (CTR is not compiled in), `hashlib.sha256`, `os.urandom`; a
+250-byte frame seals in ~0.66 ms, negligible at frame rates. The construction is the
+standard **Encrypt-then-MAC**:
+
+- Two keys HKDF-derived from the shared token — one for AES, a *separate* one for the
+  MAC (key separation is not optional).
+- Per frame: a random 16-byte IV (`os.urandom`), AES-CBC of the padded payload, then
+  HMAC-SHA256 over `IV‖ciphertext` truncated to an 8-byte tag. Overhead ~24 bytes,
+  leaving ~210 for payload.
+- Receiver verifies the tag **first**, in constant time, and rejects on mismatch —
+  that is the integrity and authenticity; only then does it decrypt. A per-peer
+  counter (carried inside the sealed payload) rejects replays.
+
+This is not a grudging workaround: the cluster's trust model is **already a single
+shared-token group**, and a token-derived *group* key matches that exactly, where
+ESP-NOW's per-peer CCM was finer-grained than jorm's trust ever needed — and capped for
+its trouble. The honest cost is that EtM is ours to get right (unique IVs, constant-time
+compare, distinct keys); we follow the standard construction and do not improvise.
+
+**The handshake, either option.** Broadcast `HELLO`/`WELCOME` can't be encrypted, so
+they carry no secret — only a **token-derived challenge/response** with a nonce, so an
+eavesdropper still can't join without the token and a replay is rejected.
+
+(A third path — a custom firmware raising the IDF encrypted-peer count to 17 — is a
+firmware project and *still* capped, so it is the worst of both. Not recommended.)
 
 ## 7. Transports are advertised
 
