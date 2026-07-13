@@ -198,6 +198,19 @@ svg.spark { display:block; }
   padding:.35rem .5rem; }
 .field input:focus-visible { outline:none; border-color:var(--au-action); box-shadow:0 0 0 3px var(--au-action-soft); }
 
+/* the console's input line — Switchboard §6.6: this is the terminal surface,
+   so the prompt is action orange and the cursor jumps (steps), never fades */
+.cline { display:flex; align-items:center; gap:.5rem; margin-top:.5rem;
+  background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.35rem .6rem; }
+.cline .prompt { font:700 .82rem var(--au-font-mono); color:var(--au-action); }
+.cline input { flex:1; font:400 .82rem var(--au-font-mono); color:var(--au-fg);
+  background:none; border:none; outline:none; }
+.cline input::placeholder { color:var(--au-fg-soft); }
+.cline.deaf { opacity:.6; }
+.term .in { color:var(--au-action); }
+.term .row.echo { color:var(--au-action); }
+
 .note { font:400 .72rem var(--au-font-mono); color:var(--au-fg-soft); }
 .busbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.6rem;
   font:400 .78rem var(--au-font-mono); }
@@ -542,7 +555,9 @@ function termLine(host, html, cls) {
   host.scrollTop = host.scrollHeight;
 }
 const consoleHTML = l =>
-  `<span class="t">${hhmmss(l)}</span><span class="lv ${l.level === 'sys' ? 'sys' : l.level === 'error' ? 'err' : ''}">${esc(l.level)}</span>${esc(l.text)}`;
+  `<span class="t">${hhmmss(l)}</span><span class="lv ${
+    l.level === 'sys' ? 'sys' : l.level === 'error' ? 'err' : l.level === 'in' ? 'in' : ''
+  }">${esc(l.level)}</span>${esc(l.text)}`;
 
 // ── websocket: one socket, $sys/# always, # while the bus tab is open ──────
 function connect() {
@@ -682,15 +697,26 @@ async function refresh() {
     S.node = await api('GET', '/api/node');
     S.nodeAt = Date.now();
     const list = await api('GET', '/api/guests');
+    const before = Object.keys(S.guests).sort().join(',');
+    const selBefore = S.sel && S.guests[S.sel] && S.guests[S.sel].state;
     S.guests = {};
     for (const g of list) S.guests[g.id] = g;
+    // Rebuilding the content pane destroys whatever is stateful inside it — a
+    // shell transcript, a scrollback, a half-typed line. So only rebuild when
+    // something structural actually changed. A repaint that erases what you are
+    // typing into is not a repaint; it is a bug with a refresh rate.
+    const structural =
+      before !== Object.keys(S.guests).sort().join(',') ||
+      (S.sel && (!S.guests[S.sel] || S.guests[S.sel].state !== selBefore));
     document.title = 'jorm · ' + S.node.hostname;
     $('#hostchip').textContent = S.node.hostname;
     S.clockOk = !S.node.clock || S.node.clock.synced;
     $('#clockchip').hidden = S.clockOk;
     measureMast();
     $('#mastg').hidden = false;
-    renderTree(); renderMastGauges(); renderMain();
+    renderTree();
+    renderMastGauges();
+    if (structural || !$('#main').firstChild) renderMain();
   } catch (e) {
     if (e.message !== 'unauthorized') toast('refresh: ' + e.message, 'fault');
   }
@@ -889,13 +915,25 @@ function renderNode(main) {
         <button class="btn primary" id="pubbtn">pub</button>
       </div>
       <div class="term" id="busterm"></div>`;
+  } else if (tab === 'shell') {
+    // Not POSIX, and not pretending to be. The node has no shell and should not
+    // grow one — a Unix on the MCU would duplicate the very API it sits on, and
+    // cost RAM on a machine whose whole thesis is honesty about scarcity. This
+    // is the jorm verbs with a prompt, so the node is manageable from a phone.
+    // The real shell is geas, in a browser, over this same API — a client's job.
+    body = `<div class="term" id="shterm"></div>
+      <div class="cline">
+        <span class="prompt">${esc((S.node && S.node.hostname) || 'jorm')} ▸</span>
+        <input id="shin" autocomplete="off" placeholder="help">
+      </div>
+      <p class="note" style="margin:.4rem 0 0">the jorm verbs · ↑/↓ history · Tab completes</p>`;
   } else if (tab === 'claims') {
     body = `<div class="panel"><div class="panel-hd"><span>Claims table</span><span>who owns what</span></div>
       <div class="panel-bd" id="claimsbody"><span class="note">loading…</span></div></div>`;
   } else if (tab === 'log') {
     body = `<div class="term" id="logterm"></div>`;
   }
-  main.innerHTML = tabsHTML(['summary', 'dashboard', 'bus', 'claims', 'log'], tab) + body;
+  main.innerHTML = tabsHTML(['summary', 'dashboard', 'shell', 'bus', 'claims', 'log'], tab) + body;
 
   if (tab === 'summary') spark($('#sp-heap2'), S.heap);
   if (tab === 'bus') {
@@ -910,11 +948,164 @@ function renderNode(main) {
       } catch (e) { toast('publish: ' + e.message, 'fault'); }
     };
   }
+  if (tab === 'shell') openShell();
   if (tab === 'claims') loadClaims();
   if (tab === 'log') {
     loadLog();
     S.logTimer = setInterval(loadLog, 5000);
   }
+}
+
+// ── the node shell ────────────────────────────────────────────────────────
+const SH_HELP = [
+  'guests                       list installed guests',
+  'start|stop|restart <id>      lifecycle',
+  'rm <id>                      remove a stopped guest',
+  'console <id>                 open a guest console',
+  'claims                       who owns which pin',
+  'log [n]                      the supervisor log',
+  'retained                     the retained bus table',
+  'pub <topic> [json]           inject a message',
+  'lib                          the shared library store',
+  'node                         board, heap, uptime, clock',
+  'temp                         the MCU temperature, in Celsius',
+  'reboot                       reboot the node',
+  'clear                        clear this transcript',
+];
+const SH_VERBS = ['guests', 'start', 'stop', 'restart', 'rm', 'console', 'claims',
+  'log', 'retained', 'pub', 'lib', 'node', 'temp', 'reboot', 'clear', 'help'];
+
+function shWrite(html, cls) {
+  if (!S.shlog) S.shlog = [];
+  S.shlog.push([html, cls]);
+  if (S.shlog.length > SCROLLBACK) S.shlog.shift();
+  const host = $('#shterm');
+  if (host) termLine(host, html, cls);
+}
+function shSay(text) { shWrite(esc(text)); }
+
+async function shRun(input) {
+  const [verb, ...rest] = input.trim().split(/\s+/);
+  const arg = rest[0];
+  const need = () => { if (!arg) throw new Error('which guest?'); return arg; };
+
+  switch (verb) {
+    case '': return;
+    case 'help': SH_HELP.forEach(shSay); return;
+    case 'clear': S.shlog = []; $('#shterm').innerHTML = ''; return;
+
+    case 'guests': {
+      const gs = await api('GET', '/api/guests');
+      if (!gs.length) return shSay('no guests installed');
+      for (const g of gs)
+        shWrite(`<span class="topic">${g.num} ${esc(g.id)}</span>` +
+          `<span class="${g.state === 'running' ? 'sys' : g.state === 'crashed' ? 'err' : ''}">${esc(g.state)}</span>` +
+          `  ${esc(g.status || '')}${g.suspected ? ' ⚠ suspected' : ''}`);
+      return;
+    }
+    case 'start': case 'stop': case 'restart':
+      shSay(`${verb} ${need()}: ` +
+        (await api('POST', `/api/guests/${need()}/${verb}`)).state);
+      return;
+    case 'rm':
+      await api('DELETE', '/api/guests/' + need());
+      shSay('removed ' + arg);
+      refresh();
+      return;
+    case 'console':
+      select(need()); setTab('console');
+      return;
+    case 'claims': {
+      const t = await api('GET', '/api/claims');
+      if (t.reserved_pins.length) shSay('reserved: pin ' + t.reserved_pins.join(', '));
+      if (!t.pins.length && !t.i2c.length) return shSay('nothing passed through');
+      for (const p of t.pins) shSay(`pin ${p.pin}  ${p.mode}  ${p.owners.join(' · ')}`);
+      for (const e of t.i2c) shSay(`i2c ${e.bus}/0x${e.addr.toString(16)}  ${e.owner}`);
+      return;
+    }
+    case 'log': {
+      const got = await api('GET', '/api/node/log?n=' + (arg || 30));
+      for (const l of got.lines) shWrite(consoleHTML(l));
+      return;
+    }
+    case 'retained': {
+      const t = await api('GET', '/api/bus/retained');
+      for (const topic of Object.keys(t).sort())
+        shWrite(`<span class="topic">${esc(topic)}</span>${esc(JSON.stringify(t[topic]))}`);
+      return;
+    }
+    case 'pub': {
+      if (!arg) throw new Error('pub <topic> [json]');
+      let msg = rest.slice(1).join(' ');
+      try { msg = JSON.parse(msg); } catch (e) { if (!msg) msg = null; }
+      const r = await api('POST', '/api/bus/publish',
+        { topic: arg, msg: (msg && typeof msg === 'object') ? { ...msg, origin: 'ui' } : msg });
+      shSay(`published ${arg} → ${r.delivered} subscriber(s)`);
+      return;
+    }
+    case 'lib': {
+      const rows = await api('GET', '/api/lib');
+      if (!rows.length) return shSay('the library store is empty');
+      for (const r of rows)
+        shSay(`${r.name}  ${r.bytes} B  imported by: ${r.imported_by.join(', ') || '—'}`);
+      return;
+    }
+    case 'node': {
+      const n = await api('GET', '/api/node');
+      shSay(`${n.hostname} · ${n.board}`);
+      shSay(`heap free ${(n.heap_free / 1048576).toFixed(2)} MB · up ${(n.uptime_ms / 1000).toFixed(0)} s`);
+      shSay(`clock: ${n.clock.synced ? n.clock.source : 'UNSYNCED — timestamps are uptime'}`);
+      return;
+    }
+    case 'temp':
+      shSay(S.temp == null ? 'no reading yet' : `${S.temp} °C`);
+      return;
+    case 'reboot':
+      await api('POST', '/api/node/reboot');
+      shSay('rebooting…');
+      return;
+    default:
+      throw new Error(`unknown: ${verb} — try 'help'`);
+  }
+}
+
+function openShell() {
+  const line = $('#shin');
+  if (!line) return;
+  if (!S.shhist) S.shhist = [];
+  let pos = S.shhist.length;
+  // the transcript lives in state, so leaving the tab and coming back — or any
+  // repaint — finds it where you left it, the way a terminal does
+  const host = $('#shterm');
+  if (S.shlog && S.shlog.length) {
+    for (const [html, cls] of S.shlog) termLine(host, html, cls);
+  } else {
+    shSay(`${(S.node && S.node.hostname) || 'jorm'} — the jorm verbs. 'help' lists them.`);
+  }
+  line.focus();
+  line.onkeydown = async ev => {
+    if (ev.key === 'Tab') {
+      ev.preventDefault();
+      const hit = SH_VERBS.filter(v => v.startsWith(line.value));
+      if (hit.length === 1) line.value = hit[0] + ' ';
+      else if (hit.length > 1) shSay(hit.join('  '));
+      return;
+    }
+    if (ev.key === 'ArrowUp') { ev.preventDefault();
+      if (pos > 0) line.value = S.shhist[--pos] || ''; return; }
+    if (ev.key === 'ArrowDown') { ev.preventDefault();
+      pos = Math.min(pos + 1, S.shhist.length);
+      line.value = S.shhist[pos] || ''; return; }
+    if (ev.key !== 'Enter' || !line.value.trim()) return;
+
+    const input = line.value;
+    line.value = '';
+    S.shhist.push(input);
+    pos = S.shhist.length;
+    shWrite(`<span class="prompt" style="color:var(--au-action)">▸ </span>${esc(input)}`, 'echo');
+    try { await shRun(input); }
+    catch (e) { shWrite(`<span class="err">✗ ${esc(e.message)}</span>`); }
+  };
 }
 
 async function loadClaims() {
@@ -979,8 +1170,20 @@ function renderGuest(main, id) {
       <div class="panel-hd"><span>Configuration</span><span>editable while stopped, too</span></div>
       <div class="panel-bd" id="cfgbody"><span class="note">loading…</span></div></div>`;
   } else if (tab === 'console') {
+    // A console is bidirectional or it is a log with extra steps. If the guest
+    // never called hal.console.input() we say so, rather than offering a box
+    // that quietly swallows whatever you type into it.
+    const deaf = !g.reads_input;
+    const live = g.state === 'running';
     body = `<div class="term" id="conterm"></div>
-      <p class="note" style="margin:.4rem 0 0">live over WS · structured {ts, level, text} · ring 200 node-side, ${SCROLLBACK} here</p>`;
+      <div class="cline${deaf || !live ? ' deaf' : ''}">
+        <span class="prompt">▸</span>
+        <input id="conin" ${deaf || !live ? 'disabled' : ''} autocomplete="off"
+          placeholder="${deaf ? 'this guest reads no input (it never called hal.console.input())'
+            : !live ? 'the guest is not running — nothing is listening'
+            : 'type a line and press Enter'}">
+      </div>
+      <p class="note" style="margin:.4rem 0 0">live over WS · {ts, level, text} · ring 200 node-side, ${SCROLLBACK} here</p>`;
   }
   main.innerHTML = tabsHTML(['overview', 'console', 'config'], tab) + body;
 
@@ -993,7 +1196,20 @@ function renderGuest(main, id) {
     }
     loadGuestDetail(id);
   }
-  if (tab === 'console') openConsole(id);
+  if (tab === 'console') {
+    openConsole(id);
+    const line = $('#conin');
+    if (line && !line.disabled) {
+      line.focus();
+      line.onkeydown = async ev => {
+        if (ev.key !== 'Enter' || !line.value) return;
+        const text = line.value;
+        line.value = '';
+        try { await api('POST', `/api/guests/${id}/console`, { line: text }); }
+        catch (e) { toast('console: ' + e.message, 'fault'); }
+      };
+    }
+  }
   if (tab === 'config') loadConfig(id);
 }
 

@@ -1,0 +1,12 @@
+{
+  "spec": 0,
+  "id": "parrot",
+  "name": "Parrot",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "restart": "never",
+  "caps": {
+    "bus": { "pub": ["parrot/#"], "sub": ["$sys/#"] }
+  }
+}

@@ -212,6 +212,20 @@ class Supervisor:
                 wdt = machine.WDT(timeout=8000)
             except (AttributeError, OSError, ValueError):
                 pass
+        # The starvation budget the node LEARNS, rather than one we assume.
+        #
+        # MicroPython's GC is mark-sweep over the whole heap, and this board has
+        # 8 MB of PSRAM: a pass over a full heap stops the world for ~400 ms —
+        # far past any budget you would pick by hand. Measuring it at boot is no
+        # use either; the heap is empty then and it collects in 12 ms.
+        #
+        # So detect collections as they happen (alloc drops when the sweep frees)
+        # and let the budget grow to fit what this node's collector actually
+        # costs. A GC pause is the supervisor stopping the world, not a guest
+        # refusing to yield — and a budget tighter than the collector convicts an
+        # innocent guest once a second, which is exactly what it was doing.
+        budget = 250
+        stalls = 0
         last = time.ticks_ms()
         last_alloc = gc.mem_alloc()
         sample_n = 0
@@ -233,6 +247,10 @@ class Supervisor:
             holder = self.guests.get(self.last_seen)
             if holder and delta > 0:
                 holder.mem_acc = getattr(holder, 'mem_acc', 0) + delta
+
+            # A sweep freed memory during this interval: the world stopped, and it
+            # was the collector that stopped it. Learn what that costs here.
+            collected = delta < -8192
             sample_n += 1
             if sample_n % 20 == 0:   # every ~2 s, push a point to each series
                 for guest in self.guests.values():
@@ -240,10 +258,30 @@ class Supervisor:
                     guest.mem.append(kb)
                     if len(guest.mem) > 30:
                         guest.mem.pop(0)
-            if gap > 350 and self.last_seen:  # 100 ms period + 250 ms starvation budget
-                guest = self.guests.get(self.last_seen)
+            if gap > 100 + budget and collected:
+                grown = min(2000, gap + 150)
+                if grown > budget:
+                    budget = grown
+                    self.node.log.append(
+                        'sys', 'gc stopped the world for %d ms — starvation budget '
+                               'is now %d ms (this heap is 8 MB; the collector walks '
+                               'all of it)' % (gap, budget))
+            elif gap > 100 + budget:
+                # Attribution is by evidence of who HOLDS the CPU — self.current,
+                # the register, which is set only between a guest's resume and its
+                # park. Not last_seen: a guest that already yielded is innocent,
+                # and blaming it is the exact mistake the register was built to
+                # end. An empty register means the supervisor stalled itself —
+                # say so, rather than framing whoever ran most recently.
+                guest = self.guests.get(self.current) if self.current else None
                 if guest and guest.state == 'running':
                     guest.set_state('unresponsive')
                     guest.console.append('sys',
-                                         'starved the loop for %d ms — flagged unresponsive' % gap)
+                                         'held the CPU for %d ms — flagged unresponsive' % gap)
                     self._flagged = guest.id
+                else:
+                    stalls += 1
+                    if stalls % 10 == 1:   # do not narrate every one
+                        self.node.log.append(
+                            'sys', 'supervisor stalled %d ms (no guest held the CPU) '
+                                   '— gc, or the node is simply busy' % gap)

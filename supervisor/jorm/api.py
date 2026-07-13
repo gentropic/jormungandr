@@ -242,6 +242,17 @@ def create_app(node, sup):
             await guest.stop()
         return {'state': await guest.start()}
 
+    @app.post('/api/guests/<id_>/console')
+    async def api_guest_console_in(req, id_):
+        guest = guest_or_404(id_)
+        if guest.state != 'running':
+            raise RefusedError('guest "%s" is %s — nothing is listening' % (id_, guest.state))
+        body = req.json
+        if not isinstance(body, dict) or not isinstance(body.get('line'), str):
+            return {'error': 'expected {"line": "..."}'}, 400
+        guest.send_input(body['line'])
+        return {'sent': body['line']}
+
     @app.get('/api/guests/<id_>/config')
     async def api_guest_config_get(req, id_):
         return guestcfg.view(guest_or_404(id_))

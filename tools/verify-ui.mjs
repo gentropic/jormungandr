@@ -8,6 +8,7 @@ const BASE = process.env.JORM_URL || 'http://localhost:8000';
 const SHOTS = process.env.SHOTS;
 const results = [];
 const S_blinkyStillThere = gs => gs.some(g => g.id === 'blinky');
+const refreshTree = p => p.reload().then(() => p.waitForSelector('.trow.g'));
 const ok = (name, cond) => {
   results.push([cond ? 'ok' : 'FAIL', name]);
   console.log((cond ? '  ok: ' : 'FAIL: ') + name);
@@ -18,8 +19,21 @@ const ok = (name, cond) => {
 const TOKEN = process.env.JORM_TOKEN || 'dev-token';
 const HDRS = { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
 const ex = p => readFileSync(new URL('../examples/' + p, import.meta.url), 'utf8');
+// This suite ends by killing the node (the stale-mode drill), so the next run
+// starts against a board that is still booting — and every setup call would be
+// swallowed by a .catch(). Wait for the node before assuming there is one.
+process.stdout.write('waiting for the node');
+for (let i = 0; i < 60; i++) {
+  try {
+    const r = await fetch(`${BASE}/api/node`, { headers: HDRS });
+    if (r.ok) { console.log(' — up'); break; }
+  } catch (e) { /* still down */ }
+  process.stdout.write('.');
+  await new Promise(r => setTimeout(r, 2000));
+}
+
 // hermetic: wipe and reinstall, so config state from a prior run can't make
-// "set unit_f=true" a no-op that never goes pending
+// a later write a no-op that never goes pending
 const DEMO = ['blinky', 'echoer', 'pinger', 'thermo'];
 for (const g of DEMO) {
   await fetch(`${BASE}/api/guests/${g}/stop`, { method: 'POST', headers: HDRS }).catch(() => {});
@@ -29,9 +43,11 @@ for (const g of DEMO) {
     files: { 'main.py': ex(g + '/main.py') } }) }).catch(() => {});
 }
 for (const g of DEMO) {
-  await fetch(`${BASE}/api/guests/${g}/start`, {
-    method: 'POST', headers: HDRS }).catch(() => {});
+  const r = await fetch(`${BASE}/api/guests/${g}/start`, {
+    method: 'POST', headers: HDRS }).catch(() => null);
+  if (!r || !r.ok) console.log(`  (warning: ${g} did not start — checks that need it will fail)`);
 }
+await new Promise(r => setTimeout(r, 1500));   // let them publish before we look
 const consoleHas = async (g, text) => {
   const r = await fetch(`${BASE}/api/guests/${g}/console?n=100`, { headers: HDRS });
   return JSON.stringify(await r.json()).includes(text);
@@ -261,6 +277,56 @@ await page.evaluate(() =>
   [...document.querySelectorAll('#menu button')].find(x => x.textContent.includes('Console')).click());
 await page.waitForSelector('#conterm', { timeout: 5000 });
 ok('menu → Console opens the console tab', true);
+
+// ── the console runs both ways ───────────────────────────────────────────
+await fetch(`${BASE}/api/guests`, { method: 'POST', headers: HDRS, body: JSON.stringify({
+  manifest: JSON.parse(ex('parrot/manifest.json')),
+  files: { 'main.py': ex('parrot/main.py') } }) }).catch(() => {});
+await fetch(`${BASE}/api/guests/parrot/start`, { method: 'POST', headers: HDRS }).catch(() => {});
+await page.waitForTimeout(1200);
+await refreshTree(page);
+await page.click('.trow.g:has-text("(parrot)")');
+await page.click('.tab[data-tab="console"]');
+await page.waitForSelector('#conin', { timeout: 5000 });
+ok('a guest that listens gets a live input line',
+  await page.evaluate(() => !document.getElementById('conin').disabled));
+await page.fill('#conin', 'echo typed from the browser');
+await page.keyboard.press('Enter');
+await page.waitForFunction(() =>
+  document.querySelector('#conterm').textContent.includes('typed from the browser'),
+  null, { timeout: 8000 });
+ok('typing into the console reaches the guest, and it answers', true);
+
+// a guest that reads nothing says so, rather than swallowing input
+await page.click('.trow.g:has-text("(blinky)")');
+await page.click('.tab[data-tab="console"]');
+await page.waitForSelector('#conin', { timeout: 5000 });
+ok('a deaf guest disables its input and says why',
+  await page.evaluate(() => {
+    const el = document.getElementById('conin');
+    return el.disabled && /reads no input/.test(el.placeholder);
+  }));
+
+// ── the node shell ───────────────────────────────────────────────────────
+await page.click('.trow.grp');
+await page.click('.tab[data-tab="shell"]');
+await page.waitForSelector('#shin', { timeout: 5000 });
+await page.fill('#shin', 'guests');
+await page.keyboard.press('Enter');
+await page.waitForFunction(() =>
+  document.querySelector('#shterm').textContent.includes('parrot'), null, { timeout: 8000 });
+ok('the node has a shell, and `guests` lists them', true);
+await page.fill('#shin', 'temp');
+await page.keyboard.press('Enter');
+await page.waitForFunction(() =>
+  /\d+ °C/.test(document.querySelector('#shterm').textContent), null, { timeout: 8000 });
+ok('`temp` reads the MCU sensor, in Celsius', true);
+await page.fill('#shin', 'nonsense');
+await page.keyboard.press('Enter');
+await page.waitForFunction(() =>
+  document.querySelector('#shterm').textContent.includes('unknown: nonsense'),
+  null, { timeout: 5000 });
+ok('an unknown verb fails plainly', true);
 
 // ── the tree reads as a tree ─────────────────────────────────────────────
 ok('each level indents deeper than its parent',

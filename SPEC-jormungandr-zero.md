@@ -365,3 +365,25 @@ Zero also fixes, by fiat rather than agony: MicroPython proper ≥ 1.24 for the 
 20. **Three-tier imports are real** (§1): bundle dir → `/lib` → stdlib whitelist. `sys.path` is set to `[bundle, /lib]` for the *load* only — imports belong at module level, and a lazy import inside a running guest would race every other guest's path (we were bitten by exactly that, three times). `PUT /api/lib/{name}` installs a driver on a live node; the import graph behind the refusals is a static scan of bundle sources. The supervisor's own vendored deps share `lib/` and are reserved by name.
 21. **Sampled memory, never "used"** (§2/§10): MicroPython has no per-task heap, so the heartbeat attributes each interval's allocation delta to whichever guest held the CPU. It is a sample, not a measurement, and the UI says *sampled*. It is enough to see which guest is growing, which is what the graph was ever for.
 22. **The tree is the cluster's, from day one** (UI): Datacenter → node → guests, collapsible, guests numbered from 100 (Proxmox VMIDs, allocated max+1 and never reused). Zero has exactly one node; v1 adds nodes to this tree and nothing else changes.
+23. **A console is bidirectional or it is a log** (§4). `hal.console.write()` and
+    `hal.console.input()` — an async iterator of lines typed at the guest's console, the way a
+    VM's serial console is a line *into* a running kernel, not a tail of what it said. A guest
+    that never calls `input()` is reported as deaf (`reads_input: false`), and the UI disables
+    its input box and says why, rather than swallowing what you type. `examples/parrot` is the
+    guest you can talk to.
+24. **The node gets a shell, and it is not a Unix** (UI). The jorm verbs with a prompt, history
+    and completion — enough to manage the node from a phone. A Unix *on the MCU* is refused on
+    purpose: it would duplicate the very API it sits on, cost RAM on a machine whose thesis is
+    honesty about scarcity, and the one thing it adds over the API — arbitrary code execution —
+    is already available three ways (maintenance mode, OTA, the serial escape window). The real
+    shell is **geas** (`auditable/ext/geas`), in a browser, bound to this API: POSIX syntax,
+    pipes, scripting, and not one byte of it on the chip. That is a client's job, and a second
+    surface — the flash-served UI has a 96 KB budget and geas plus a terminal is hundreds.
+25. **The starvation budget is learned, not assumed** (§1). MicroPython's GC is mark-sweep over
+    the whole heap; on 8 MB of PSRAM a pass stops the world for ~400 ms — past any budget you
+    would pick by hand, and measuring at boot is no help (the heap is empty then and it collects
+    in 12 ms). So the node *detects* collections as they happen and grows its budget to fit what
+    its own collector actually costs. A GC pause is the supervisor stopping the world, not a
+    guest refusing to yield. Also: the soft flag now names `current` — who **holds** the CPU —
+    never `last_seen`. Blaming the guest that already yielded is the stalest-`last_yield` mistake
+    reintroduced, and it convicted an innocent guest once a second until the board said so.

@@ -43,6 +43,7 @@ class Guest:
         self.cfg_schema = None
         self.cfg_pending = set()
         self.cfg_watchers = []
+        self.stdin = []          # console readers; empty means the guest is deaf
         self.num = None          # VMID-ish: assigned at install, stable for life
         self.mem = []            # sampled heap attributed to this guest (spec §2)
         self._child_error = None
@@ -85,11 +86,27 @@ class Guest:
             self.num = None
         return self.num
 
+    @property
+    def reads_input(self):
+        return bool(self.stdin)
+
+    def send_input(self, line):
+        """A line typed at the guest's console. Refused loudly if nobody reads —
+        a console that swallows what you type is worse than one that admits it
+        cannot hear you."""
+        if not self.stdin:
+            raise RefusedError('guest "%s" reads no console input '
+                               '(it never called hal.console.input())' % self.id)
+        self.console.append('in', str(line))   # echo it: the log is the transcript
+        for tap in self.stdin:
+            tap.push(str(line))
+
     def summary(self):
         m = self.manifest or {}
         return {
             'id': self.id,
             'num': self.num,
+            'reads_input': self.reads_input,
             'name': m.get('name', self.id),
             'state': self.state,
             'status': self.status,
@@ -211,6 +228,7 @@ class Guest:
                 self.sup.bus.unsubscribe(sub)
             self.subs = []
             self.cfg_watchers = []
+            self.stdin = []
             self.sup.claims.release(self.id)
             self.status = ''
 

@@ -29,6 +29,7 @@ class Hal:
         self._sup = sup
         self._guest = guest
         self.bus = BusHandle(self, guest.bus_grants())
+        self.console = ConsoleHandle(self)
         self.net = NetHandle(self)
         self.storage = StorageHandle(self)
         self.ui = UiHandle(self)
@@ -128,6 +129,40 @@ class Hal:
 
     def Queue(self, n=16):
         return HalQueue(self, n)
+
+
+class ConsoleHandle:
+    """hal.console — the guest's serial line, and it runs both ways.
+
+    A VM's console is not a log: you type into it. A guest that wants to be
+    driven by a human asks for input(); one that never asks simply never reads,
+    and the UI says so rather than offering a box that does nothing. Registering
+    the reader is what makes the difference visible — see Guest.reads_input.
+    """
+
+    def __init__(self, hal):
+        self._hal = hal
+
+    def write(self, *args):
+        self._hal.log(*args)
+
+    def input(self):
+        guest = self._hal._guest
+        tap = Tap(qlen=16)   # a guest that ignores its console loses its own lines
+        guest.stdin.append(tap)
+        return _LineIterator(self._hal, tap)
+
+
+class _LineIterator:
+    def __init__(self, hal, tap):
+        self._hal = hal
+        self._tap = tap
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._hal._yield(self._tap.get())
 
 
 class BusHandle:
