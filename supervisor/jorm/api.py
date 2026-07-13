@@ -117,6 +117,21 @@ def create_app(node, sup):
         _reboot_soon()
         return {'rebooting': True}
 
+    @app.put('/api/node/cluster')
+    async def api_node_cluster(req):
+        body = req.json
+        name = (body or {}).get('name', '')
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 32:
+            raise RefusedError('a cluster name is 1–32 characters')
+        name = name.strip()
+        # settings.json also holds the wifi psk and the bearer token. Read, edit
+        # one key, write atomically — never regenerate a secrets file from a
+        # partial idea of what was in it.
+        node.settings['cluster'] = name
+        write_atomic('settings.json', json.dumps(node.settings))
+        node.log.append('sys', 'cluster renamed to "%s"' % name)
+        return {'cluster': name}
+
     # -- supervisor OTA (spec §11): stage, update, trial, confirm/rollback ----
 
     OTA_ROOTS = ('main.py', 'boot.py', 'ui.html', 'jorm/', 'lib/')

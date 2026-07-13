@@ -98,6 +98,13 @@ The jormungandr spec's "amber" reads as Switchboard **caution** (hue-honest: yel
   than ask** — one more deliberate click on a control that has visibly changed its
   mind about what it does. Escape closes. Menus are surface-bright + 1px border:
   depth from the surface register, never a drop shadow.
+- **The root is the cluster, and it has a name.** Not "Datacenter" — a cluster,
+  renameable in place (right-click the root), persisted in `settings.json` beside
+  the node it describes. Zero has exactly one node, so the cluster is an
+  aspiration with a name; that is the point, and v1 adds nodes to this tree
+  rather than rearranging it. Each level indents deeper than its parent, which
+  sounds too obvious to state until the root is indented deeper than its own
+  children and the tree quietly reads backwards.
 - **The bus monitor confesses its own drops.** A browser that falls behind loses
   its own messages (spec §5) — and is told so, in caution, because a monitor that
   quietly drops is a monitor that lies about what the bus carried.

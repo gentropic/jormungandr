@@ -262,6 +262,28 @@ await page.evaluate(() =>
 await page.waitForSelector('#conterm', { timeout: 5000 });
 ok('menu → Console opens the console tab', true);
 
+// ── the tree reads as a tree ─────────────────────────────────────────────
+ok('each level indents deeper than its parent',
+  await page.evaluate(() => {
+    const px = s => parseFloat(getComputedStyle(document.querySelector(s)).paddingLeft);
+    return px('.trow.root') < px('.trow.grp') && px('.trow.grp') < px('.trow.g');
+  }));
+
+// ── rename the cluster ───────────────────────────────────────────────────
+await page.click('.trow.root', { button: 'right' });
+await page.waitForSelector('#menu');
+await page.evaluate(() =>
+  [...document.querySelectorAll('#menu button')].find(x => x.textContent.includes('Rename')).click());
+await page.waitForSelector('#clustername', { timeout: 3000 });
+await page.fill('#clustername', 'Gentropic');
+await page.keyboard.press('Enter');
+await page.waitForFunction(() =>
+  document.querySelector('.trow.root') &&
+  document.querySelector('.trow.root').textContent.includes('Gentropic'), null, { timeout: 6000 });
+ok('the cluster is renameable, and it sticks', true);
+const persisted = await (await fetch(`${BASE}/api/node`, { headers: HDRS })).json();
+ok('and the node persisted it', persisted.cluster === 'Gentropic');
+
 // ── the phone ────────────────────────────────────────────────────────────
 await page.setViewportSize({ width: 390, height: 844 });   // a phone, not a guess
 await page.waitForTimeout(400);

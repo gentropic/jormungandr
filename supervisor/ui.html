@@ -99,11 +99,17 @@ body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 va
 .trow { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left;
   font:400 .78rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
   border-left:2px solid transparent; padding:.3rem .8rem; cursor:pointer; }
-.trow.g { padding-left:2.1rem; }
-.trow.root { font-weight:700; }
+/* One indent step per level. The root had the base .8rem and its child had .4rem,
+   so the tree read backwards — the parent looked nested inside its own children. */
+.trow.root { padding-left:.45rem; font-weight:700; }
+.trow.grp  { padding-left:1.35rem; }
+.trow.g    { padding-left:2.9rem; }
 .tw { width:.9em; display:inline-block; text-align:center; color:var(--au-fg-soft); }
 .tnum { color:var(--au-fg-soft); margin-right:.15rem; }
-.tree .grp { padding-left:.4rem; }
+.trename { font:400 .78rem var(--au-font-mono); color:var(--au-fg);
+  background:var(--au-surface); border:1px solid var(--au-action); border-radius:var(--au-radius);
+  padding:.15rem .3rem; width:calc(100% - 1.6rem); margin:.15rem .5rem; }
+.trename:focus-visible { outline:none; box-shadow:0 0 0 3px var(--au-action-soft); }
 .trow:hover { background:var(--au-surface-bright); }
 .trow.sel { background:var(--au-selected-soft); border-left-color:var(--au-selected); }
 .trow .st { width:1em; text-align:center; }
@@ -333,7 +339,7 @@ const S = {
   conWS: null, logTimer: null, busPaused: false,
   panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
   clockOk: true, temp: null, drops: 0,
-  open: { dc: true, node: true },
+  open: { dc: true, node: true }, renaming: false,
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -416,6 +422,19 @@ function openMenu(x, y, title, items) {
 }
 
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
+
+function clusterMenu(x, y) {
+  openMenu(x, y, (S.node && S.node.cluster) || 'Cluster', [
+    { glyph: '✎', label: 'Rename cluster…', run: () => { S.renaming = true; renderTree(); } },
+    '-',
+    { glyph: '▾', label: 'Expand all', run: () => {
+        S.open.dc = S.open.node = true; renderTree();
+      } },
+    { glyph: '▸', label: 'Collapse all', run: () => {
+        S.open.node = false; renderTree();
+      } },
+  ]);
+}
 
 function nodeMenu(x, y) {
   const url = S.base;
@@ -704,8 +723,12 @@ function renderTree() {
   const running = ids.filter(id => S.guests[id].state === 'running').length;
   const rows = [];
 
-  rows.push(`<button class="trow root" data-tw="dc">` +
-    `<span class="tw">${S.open.dc ? '▾' : '▸'}</span><span class="st info">▣</span>Datacenter</button>`);
+  const cluster = (S.node && S.node.cluster) || 'Cluster';
+  rows.push(S.renaming
+    ? `<input class="trename" id="clustername" value="${esc(cluster)}" maxlength="32">`
+    : `<button class="trow root" data-tw="dc" data-root="1">` +
+      `<span class="tw">${S.open.dc ? '▾' : '▸'}</span><span class="st info">▣</span>` +
+      `${esc(cluster)}</button>`);
 
   if (S.open.dc) {
     rows.push(`<button class="trow grp${S.sel === null ? ' sel' : ''}" data-id="" data-tw="node">` +
@@ -728,11 +751,35 @@ function renderTree() {
     }
   }
   $('#tree').innerHTML = rows.join('');
+
+  const field = $('#clustername');
+  if (field) {
+    field.focus();
+    field.select();
+    const done = async commit => {
+      const name = field.value.trim();
+      S.renaming = false;
+      if (commit && name && name !== cluster) {
+        try {
+          const got = await api('PUT', '/api/node/cluster', { name });
+          S.node.cluster = got.cluster;
+          toast('cluster is now "' + got.cluster + '"');
+        } catch (e) { toast('rename: ' + e.message, 'fault'); }
+      }
+      renderTree();
+    };
+    field.onkeydown = ev => {
+      if (ev.key === 'Enter') done(true);
+      if (ev.key === 'Escape') done(false);
+    };
+    field.onblur = () => done(true);
+  }
+
   $('#tree').querySelectorAll('.trow').forEach(row => {
     const tw = row.dataset.tw;
     const id = row.dataset.id;
-    const menu = id ? (x, y) => guestMenu(x, y, id)
-      : (id === '' ? nodeMenu : null);
+    const menu = row.dataset.root ? clusterMenu
+      : (id ? (x, y) => guestMenu(x, y, id) : (id === '' ? nodeMenu : null));
 
     row.onclick = ev => {
       // clicking the twisty folds; clicking the row selects

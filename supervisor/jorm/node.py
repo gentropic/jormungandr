@@ -22,6 +22,13 @@ class Node:
     def hostname(self):
         return self.settings.get('hostname') or 'jorm-' + self.mac4
 
+    @property
+    def cluster(self):
+        # Zero has exactly one node, so "the cluster" is an aspiration with a
+        # name. That is the point: the tree is the cluster's from day one, and
+        # v1 adds nodes to it rather than rearranging it.
+        return self.settings.get('cluster') or 'Cluster'
+
     def info(self):
         gc.collect()
         # os.uname is absent on the unix port; sys.implementation._machine is portable
@@ -29,6 +36,7 @@ class Node:
         board = board().machine if board else getattr(sys.implementation, '_machine', sys.platform)
         return {
             'hostname': self.hostname,
+            'cluster': self.cluster,
             'board': board,
             'ip': self.ip,
             'profile': 'mpy',
