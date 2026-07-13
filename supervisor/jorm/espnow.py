@@ -79,14 +79,21 @@ class EspNowLink:
 
     # -- discovery (SPEC-three §5) ------------------------------------------
 
-    async def send_hello(self, cluster):
-        """Broadcast a SEALED HELLO. Because the sealer's key is the token-derived
-        GROUP key, sealing works over broadcast — and that seals the handshake: only a
-        gateway holding the token can produce a HELLO a leaf can unseal, so authenticity
-        is free and no separate challenge/response is needed. Replay of a HELLO just
-        re-advertises the real gateway, so it carries no counter."""
+    async def send_hello(self, cluster, channel=0):
+        """Broadcast a SEALED HELLO naming the cluster AND the gateway's channel (§5).
+
+        Because the sealer's key is the token-derived GROUP key, sealing works over
+        broadcast — and that seals the handshake: only a gateway holding the token can
+        produce a HELLO a leaf can unseal, so authenticity is free and no separate
+        challenge/response is needed. Replay of a HELLO just re-advertises the real
+        gateway, so it carries no counter.
+
+        The channel byte is load-bearing: the leaf must NOT trust which channel its own
+        scan loop thinks it is on when it hears this — ESP-NOW buffers received frames,
+        so a HELLO caught while dwelling on the gateway's channel can surface a hop or
+        two later and be misattributed. The gateway states its channel; the leaf obeys."""
         self.add_peer(BROADCAST)
-        frame = bytes([T_HELLO]) + self._seal.seal(cluster.encode())
+        frame = bytes([T_HELLO]) + self._seal.seal(cluster.encode() + bytes([channel & 0xFF]))
         try:
             await self.e.asend(BROADCAST, frame, False)   # broadcast: no ACK to wait on
         except OSError:
@@ -96,8 +103,12 @@ class EspNowLink:
         """Hop channels listening for a HELLO for our cluster; return (mac, channel).
 
         A pure-ESP-NOW leaf does not know the gateway's channel up front (peers must
-        share it), so it scans — set each channel, listen briefly, and lock onto the
-        first channel that yields a HELLO that unseals to our cluster name."""
+        share it), so it scans — set each channel and listen briefly. The channel we
+        return is the one the gateway ADVERTISED in the HELLO, not the one our scan loop
+        was on: because ESP-NOW queues received frames, a HELLO can be delivered a hop
+        after we heard it, so the loop counter is an unreliable witness (this stranded a
+        leaf on the wrong channel). A legacy HELLO with no channel byte falls back to the
+        loop's channel."""
         want = cluster.encode()
         for ch in (channels or range(1, 14)):
             try:
@@ -111,8 +122,11 @@ class EspNowLink:
                 except Exception:
                     continue
                 if frame and len(frame) > 1 and frame[0] == T_HELLO:
-                    if self._seal.unseal(frame[1:]) == want:
-                        return bytes(mac), ch
+                    pt = self._seal.unseal(frame[1:])
+                    if pt is None or pt[:len(want)] != want:
+                        continue
+                    adv = pt[len(want)] if len(pt) > len(want) else 0
+                    return bytes(mac), (adv or ch)     # advertised channel wins
         return None, None
 
     # -- send ---------------------------------------------------------------

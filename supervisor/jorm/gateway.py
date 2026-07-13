@@ -42,9 +42,15 @@ class Gateway:
     async def _hello_loop(self):
         # Advertise for leaves to find, sealed so only token-holders can read it (§5).
         # Fast (1 Hz) so a scanning leaf, which sits on each channel only briefly,
-        # reliably catches one while it is on ours.
+        # reliably catches one while it is on ours. The HELLO states our real channel so
+        # the leaf pins to it directly, rather than guessing from its own scan position.
         while True:
-            await self.link.send_hello(self.node.cluster)
+            ch = 0
+            try:
+                ch = self.node.wlan.config('channel')
+            except (OSError, AttributeError):
+                pass
+            await self.link.send_hello(self.node.cluster, ch)
             await asyncio.sleep(1)
 
     def _on_frame(self, mac, text):
