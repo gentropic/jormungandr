@@ -126,15 +126,20 @@ So the tiers are a real spectrum, and the middle one is proven:
 What a smart leaf costs is not memory but *trust*: mpy's soft isolation, sharper on a
 single core with less headroom — a runaway wedges the node until the WDT catches it,
 and one greedy guest can OOM it. The dumb leaf's fixed map is immune to both, which is
-what it buys. Guest *management* over the bus (install/start/stop without an HTTP API)
-is the piece still to build; today's smart leaf runs what is in its flash at boot.
+what it buys. Guest *management* over the bus is **built**: a central node lists,
+installs, starts, stops and removes a leaf's guests by publishing `cmd/leaf/<name>/<verb>`
+and reading `leaf/<name>/result`; the leaf forwards its guests' state up as
+`leaf/<name>/guest/<id>` so the flagship sees the roster with no `/api/guests` to call
+(`jorm leaf <name> [guests|start|stop|restart|rm|install]`).
 
 ## Status
 
 **Slice 1 (dumb WiFi bus-client leaf): done.** Stripped boot, one outbound bus
 connection, the I/O map — proven on a real C3 streaming to a real S3, no ENOMEM.
 
-**Smart leaf (§7): proven feasible on silicon.** Fits (~96 KB free), hosts a real
-guest, survives a runaway via the WDT drill. `jorm/leafhost.py`, `role: "leaf-host"`.
-Guest-management-over-the-bus, ESP-NOW, BLE, auto-discovery, and UI-side editing are
-named for later.
+**Smart leaf (§7): done, on silicon.** Fits (~96 KB free), hosts a real guest,
+survives a runaway via the WDT drill, and is **managed from a central node over the
+bus** — verified in the sim and on a real C3 driven from an S3. `jorm/leafhost.py`,
+`role: "leaf-host"`. ESP-NOW, BLE, auto-discovery, UI-side leaf editing, and
+reconnection hardening (a flagship that re-associates WiFi after a drop, an uplink
+that detects a rebooted flagship) are named for later.
