@@ -43,15 +43,17 @@ class Node:
         except (AttributeError, OSError, ValueError):
             return None
 
+    def board_name(self):
+        # os.uname is absent on the unix port; sys.implementation._machine is portable
+        u = getattr(os, 'uname', None)
+        return u().machine if u else getattr(sys.implementation, '_machine', sys.platform)
+
     def info(self):
         gc.collect()
-        # os.uname is absent on the unix port; sys.implementation._machine is portable
-        board = getattr(os, 'uname', None)
-        board = board().machine if board else getattr(sys.implementation, '_machine', sys.platform)
         return {
             'hostname': self.hostname,
             'cluster': self.cluster,
-            'board': board,
+            'board': self.board_name(),
             'ip': self.ip,
             'profile': 'mpy',
             'runtimes': ['mpy'],

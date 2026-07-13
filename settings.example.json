@@ -5,7 +5,9 @@
   },
   "token": "change-me-a-long-random-string",
   "cluster": "Cluster",
+  "peers": [],
   "port": 80,
   "reserved_pins": [],
   "wdt": true
 }
+

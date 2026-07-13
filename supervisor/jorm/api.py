@@ -58,6 +58,38 @@ def _read_marker(path):
 def create_app(node, sup):
     app = Microdot()
 
+    # A cluster's UI is served by one node but reads and drives the others, so the
+    # browser makes cross-origin calls between nodes (one §1). The token still gates
+    # every /api/ call — CORS "*" only says "any origin's script may ATTEMPT a call",
+    # and without the bearer token that attempt is a 401. This widens who may knock,
+    # never who may enter; the token is the door.
+    CORS = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    }
+
+    @app.after_request
+    async def cors(req, res):
+        for k, v in CORS.items():
+            res.headers[k] = v
+        return res
+
+    # A CORS preflight (OPTIONS) is answered by microdot deep inside find_route,
+    # before before_request/after_request ever run — so the after_request hook above
+    # never sees it, and the preflight would ship with no cors headers, and the real
+    # cross-origin call would never be made. The seam microdot gives us is
+    # options_handler: fold the cors headers into the dict it already returns (which
+    # otherwise carries only Allow). A preflight needs no token, correctly — it is
+    # the question the browser asks BEFORE it sends the authorized request.
+    _default_options = app.options_handler
+
+    def _options_with_cors(req):
+        h = dict(_default_options(req))
+        h.update(CORS)
+        return h
+    app.options_handler = _options_with_cors
+
     @app.before_request
     async def auth(req):
         # The app shell is public; every byte of data behind it is not. /web/* is
@@ -506,6 +538,25 @@ def create_app(node, sup):
     @app.get('/api/claims')
     async def api_claims(req):
         return sup.claims.table()
+
+    # -- cluster (one §1: every node is the front door) ----------------------
+
+    @app.get('/api/cluster')
+    async def api_cluster(req):
+        # This node, plus the peers it currently hears. The UI connects to whichever
+        # node you opened and draws the whole cluster from here — so `self` is how a
+        # peer's UI names this node without a second round trip, and `peers` is the
+        # rest of the tree. A cluster of one returns an empty peers list, which is
+        # correct, not an error: the tree still has its one node.
+        n = node.info()
+        return {
+            'cluster': node.cluster,
+            'self': {'name': node.hostname, 'url': None,  # 'you are already here'
+                     'board': n['board'], 'rssi': n.get('rssi')},
+            'peers': [{'name': p['name'], 'url': p['url'], 'board': p['board'],
+                       'rssi': p['rssi'], 'seed': p['seed']}
+                      for p in sup.cluster.live()],
+        }
 
     # -- usb (spec §8: virtual hardware, fixed at boot) ----------------------
 

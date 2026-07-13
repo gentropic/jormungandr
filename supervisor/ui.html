@@ -458,6 +458,7 @@ const S = {
   panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
   clockOk: true, temp: null, drops: 0, watchers: [],
   open: { dc: true, node: true }, renaming: false,
+  peers: [], clusterName: null,    // the rest of the cluster (one §1)
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -691,6 +692,10 @@ function connect() {
     ws.send(JSON.stringify({ op: 'sub', filters: currentScope() }));
     S.scope = currentScope();
     refresh();
+    // Learn the cluster a beat AFTER connect, not during it — the ESP32's server is
+    // already serving the shell/bus/first render at connect, and piling the cluster
+    // reads onto that storm is what resets a connection. A second later it is idle.
+    setTimeout(loadCluster, 1200);
   };
   ws.onmessage = ev => {
     S.lastMsg = Date.now();
@@ -858,6 +863,52 @@ async function refresh() {
   }
 }
 
+// ── cluster (one §1: the tree spans every node, managed from any one) ────────
+// The UI you are looking at is served by one node but the cluster is all of them.
+// A peer is read cross-origin (CORS + the shared token); if it does not answer it
+// shows as unreachable rather than vanishing. Clicking a peer HOPS the whole UI to
+// it — every node is the front door, so "manage that node" means "become its UI".
+async function peerGet(url, path) {
+  const r = await fetch(url + path, { headers: { Authorization: 'Bearer ' + S.token } });
+  if (!r.ok) throw new Error(r.status + '');
+  return r.json();
+}
+
+async function loadCluster() {
+  if (!S.token || !S.base) return;
+  let c;
+  try { c = await api('GET', '/api/cluster'); } catch (e) { return; }
+  S.clusterName = c.cluster;
+  const peers = await Promise.all((c.peers || []).map(async p => {
+    try {
+      const [node, guests] = await Promise.all([
+        peerGet(p.url, '/api/node'), peerGet(p.url, '/api/guests')]);
+      return { url: p.url, name: node.hostname, board: node.board,
+               rssi: p.rssi, seed: p.seed, guests, reachable: true };
+    } catch (e) {
+      // Seeded-but-silent, or just rebooting: keep it in the tree, marked down.
+      return { url: p.url, name: p.name, board: p.board, rssi: p.rssi,
+               seed: p.seed, guests: [], reachable: false };
+    }
+  }));
+  S.peers = peers;
+  renderTree();
+}
+
+async function hop(url) {
+  if (!url || url === S.base) return;
+  toast('opening ' + url.replace(/^https?:\/\//, '') + '…');
+  try {
+    // Mint a one-time ticket on the peer (cross-origin, the shared cluster token),
+    // then navigate carrying it in the fragment — never the token itself. Same
+    // contract as `jorm open`: the credential in the URL is worthless in a minute.
+    const r = await fetch(url + '/api/auth/ticket',
+      { method: 'POST', headers: { Authorization: 'Bearer ' + S.token } });
+    if (r.ok) { location.href = url + '/#t=' + (await r.json()).ticket; return; }
+  } catch (e) { /* fall through */ }
+  location.href = url + '/';   // no ticket: the peer will ask for the token once
+}
+
 const GLYPH = { running: ['●', 'go'], stopped: ['○', 'off'], crashed: ['✗', 'fault'],
   unresponsive: ['⚠', 'caution'], starting: ['◌', 'caution'], stopping: ['◌', 'caution'] };
 const BADGE = { running: 'go', stopped: 'off', crashed: 'fault',
@@ -911,6 +962,32 @@ function renderTree() {
       if (!ids.length)
         rows.push(`<div class="note" style="padding:.3rem 2.1rem">no guests installed</div>`);
     }
+
+    // The rest of the cluster: each peer is a node branch you can open to see its
+    // guests, and click to hop into. Read-only here — you manage a node by becoming
+    // its front door, not by reaching across.
+    for (const peer of S.peers) {
+      const okey = 'peer:' + peer.url;
+      const open = !!S.open[okey];
+      const run = peer.guests.filter(g => g.state === 'running').length;
+      const dot = peer.reachable ? 'go' : 'fault';
+      const mark = peer.reachable ? '◉' : '⚠';
+      rows.push(`<button class="trow grp" data-hop="${esc(peer.url)}" data-tw="${esc(okey)}">` +
+        `<span class="tw">${peer.guests.length ? (open ? '▾' : '▸') : '·'}</span>` +
+        `<span class="st ${dot}">${mark}</span>${esc(peer.name)}` +
+        (peer.seed ? '<span class="note" style="margin-left:.3rem">seed</span>' : '') +
+        `<span class="note" style="margin-left:auto">` +
+        (peer.reachable ? `${run}/${peer.guests.length}` : 'unreachable') +
+        `</span></button>`);
+      if (open) {
+        for (const g of peer.guests.sort((a, b) => (a.num || 0) - (b.num || 0))) {
+          const [gl, cls] = GLYPH[g.state] || ['?', 'off'];
+          rows.push(`<button class="trow g" data-hop="${esc(peer.url)}">` +
+            `<span class="st ${cls}">${gl}</span>` +
+            `<span class="tnum">${g.num || '—'}</span>(${esc(g.id)})</button>`);
+        }
+      }
+    }
   }
   $('#tree').innerHTML = rows.join('');
 
@@ -940,16 +1017,18 @@ function renderTree() {
   $('#tree').querySelectorAll('.trow').forEach(row => {
     const tw = row.dataset.tw;
     const id = row.dataset.id;
+    const hopUrl = row.dataset.hop;
     const menu = row.dataset.root ? clusterMenu
       : (id ? (x, y) => guestMenu(x, y, id) : (id === '' ? nodeMenu : null));
 
     row.onclick = ev => {
-      // clicking the twisty folds; clicking the row selects
+      // clicking the twisty folds; clicking the row selects, or hops to a peer
       if (tw && ev.target.classList.contains('tw')) {
         S.open[tw] = !S.open[tw];
         renderTree();
         return;
       }
+      if (hopUrl) { hop(hopUrl); return; }
       if (id !== undefined) select(id || null);
     };
     if (menu) {
@@ -1129,17 +1208,23 @@ async function openShell(attempt) {
       },
     });
   } catch (e) {
-    // The usual cause is not a missing file — the assets are public and cached
-    // hard. It is the node having been busy or mid-reboot (an OTA, a usb replan, a
-    // watchdog) exactly when this tab reached for the terminal. Once it is back, a
-    // retry succeeds — so offer one instead of a dead end that sends the reader to
-    // hunt for a web/ dir that is almost certainly right there.
+    // The assets are public and cached hard, so a failure here is almost never a
+    // missing file — it is the node dropping a connection under load (the ESP32's
+    // server juggles the shell's four parallel module fetches, the bus socket, and
+    // the poll loop at once) or mid-reboot. Both clear on a retry, so retry a few
+    // times automatically before bothering the reader; only a persistent failure
+    // gets the manual button.
+    if (attempt < 4) {
+      host.innerHTML = `<p class="note">loading the terminal… (retry ${attempt})</p>`;
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      return openShell(attempt + 1);
+    }
     host.innerHTML = `<div class="note" style="color:var(--au-error)">
       <p>the terminal did not load — the node may have been busy or rebooting.</p>
       <p style="font-family:var(--sw-mono);color:var(--au-fg-soft)">${esc(e.message)}</p>
       <p><button class="btn" id="shell-retry">try again</button></p></div>`;
     const b = $('#shell-retry');
-    if (b) b.onclick = () => openShell(attempt + 1);
+    if (b) b.onclick = () => openShell(1);
   }
 }
 
@@ -1643,6 +1728,10 @@ function boot() {
   }
   boot();
 })();
+// The cluster changes on its own — a node joins, a peer reboots, a guest starts on
+// another board. Re-poll on a slow cadence so the tree stays current without the
+// per-second cost of the guest list; loadCluster no-ops when logged out.
+setInterval(loadCluster, 5000);
 </script>
 </body>
 </html>

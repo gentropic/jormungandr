@@ -12,7 +12,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MPY="${MPY:-$HOME/.local/bin/micropython}"
-FS="$ROOT/sim/fs"
+# SIM_FS points the flash elsewhere, so a second node (a second port, a second
+# hostname) can run on the same host — which is how cluster discovery is tested.
+FS="${SIM_FS:-$ROOT/sim/fs}"
 
 if [ ! -x "$MPY" ]; then
     echo "error: micropython not found at $MPY (set MPY=/path/to/micropython)" >&2

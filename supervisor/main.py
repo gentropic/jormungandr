@@ -86,6 +86,8 @@ async def amain(node, sup, app):
     asyncio.create_task(sup.heartbeat())
     asyncio.create_task(sup.ntp())
     asyncio.create_task(sup.telemetry())
+    asyncio.create_task(sup.cluster.announce())   # beacon out (one §1)
+    asyncio.create_task(sup.cluster.listen())     # peers in
     asyncio.create_task(confirm_trial(node))
     await sup.autostart()
     node.log.append('sys', 'api listening on :%d' % node.port)
