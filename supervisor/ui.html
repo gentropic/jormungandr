@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jorm</title>
+<!-- Jormungandr: the world-serpent, an ouroboros. Inline SVG data-URI so
+     the single-file UI stays a single file and the tab icon costs no request.
+     Theme-aware via a media query inside the SVG. -->
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHN0eWxlPi5ze2ZpbGw6IzhCM0YwMH0ua3tzdHJva2U6IzhCM0YwMH1AbWVkaWEocHJlZmVycy1jb2xvci1zY2hlbWU6ZGFyayl7LnN7ZmlsbDojRkI5MDQ0fS5re3N0cm9rZTojRkI5MDQ0fX08L3N0eWxlPjxnIHRyYW5zZm9ybT0icm90YXRlKC01NyAxNiAxNikiPjxjaXJjbGUgY2xhc3M9ImsiIGN4PSIxNiIgY3k9IjE2IiByPSIxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSI0LjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWRhc2hhcnJheT0iNTMgOS44MyIvPjxjaXJjbGUgY2xhc3M9InMiIGN4PSIyMS41MyIgY3k9IjcuNjciIHI9IjMuMCIvPjxjaXJjbGUgY3g9IjIyLjM0IiBjeT0iOS4xNyIgcj0iMS4wIiBmaWxsPSIjMTUxNzFBIi8+PC9nPjwvc3ZnPg==">
 <script>
 // first-paint theme, before CSS: stored choice, else OS preference
 (function () {
@@ -1092,11 +1096,20 @@ function renderNode(main) {
 // use, and the node has 13 MB of flash but only ~90 KB/s of wire.
 let shellDispose = null;
 
-async function openShell() {
+async function openShell(attempt) {
   const host = $('#shellhost');
   if (!host) return;
+  attempt = attempt || 1;
+  // geas.js alone is ~196 KB gzipped, so the first open spends a second on the
+  // wire. Say so, rather than leaving the pane blank and looking hung.
+  host.innerHTML = '<p class="note">loading the terminal…</p>';
   try {
-    const { mountShell } = await import('/web/shell.js');
+    // On a retry, bust the module cache — a browser can hold a failed fetch, and a
+    // node that was mid-reboot a moment ago will answer cleanly now. The query is
+    // dropped when the sub-imports (./term.js &c.) resolve, so only shell.js is
+    // re-fetched, not the whole graph.
+    const url = '/web/shell.js' + (attempt > 1 ? '?r=' + Date.now() : '');
+    const { mountShell } = await import(url);
     shellDispose = mountShell(host, {
       api,
       state: S,
@@ -1116,9 +1129,17 @@ async function openShell() {
       },
     });
   } catch (e) {
-    host.innerHTML = `<p class="note" style="color:var(--au-error)">` +
-      `the terminal did not load: ${esc(e.message)}<br>` +
-      `it is served from the node at /web/shell.js — check the node has a web/ dir</p>`;
+    // The usual cause is not a missing file — the assets are public and cached
+    // hard. It is the node having been busy or mid-reboot (an OTA, a usb replan, a
+    // watchdog) exactly when this tab reached for the terminal. Once it is back, a
+    // retry succeeds — so offer one instead of a dead end that sends the reader to
+    // hunt for a web/ dir that is almost certainly right there.
+    host.innerHTML = `<div class="note" style="color:var(--au-error)">
+      <p>the terminal did not load — the node may have been busy or rebooting.</p>
+      <p style="font-family:var(--sw-mono);color:var(--au-fg-soft)">${esc(e.message)}</p>
+      <p><button class="btn" id="shell-retry">try again</button></p></div>`;
+    const b = $('#shell-retry');
+    if (b) b.onclick = () => openShell(attempt + 1);
   }
 }
 

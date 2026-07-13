@@ -94,6 +94,8 @@ await page.waitForFunction(n =>
   document.querySelectorAll('.trow.g').length === n, installed, { timeout: 8000 });
 ok(`login → tree renders all ${installed} guests`, true);
 ok('hostchip = jorm-c510', (await page.textContent('#hostchip')) === 'jorm-c510');
+ok('favicon: an embedded ouroboros, no network request', await page.$eval(
+  'link[rel="icon"]', el => el.href.startsWith('data:image/svg+xml') && el.href.length > 200));
 const running = await runningNow();
 await page.waitForFunction(t =>
   document.querySelector('#gval').textContent === t,
