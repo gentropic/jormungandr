@@ -380,6 +380,7 @@ Zero also fixes, by fiat rather than agony: MicroPython proper ≥ 1.24 for the 
     pipes, scripting, and not one byte of it on the chip. That is a client's job, and a second
     surface — the flash-served UI has a 96 KB budget and geas plus a terminal is hundreds.
 25. **The starvation budget is learned, not assumed** (§1). MicroPython's GC is mark-sweep over
+26. **`jorm shell` runs the shell we already have** (§11). geas is the shell — the CLI does not implement a second one. The VFS and the jorm builtins live in `supervisor/web/jorm-pack.js`, DOM-free, and both front-ends import it: the browser's Shell tab and `tools/geas-cli.mjs`. A REPL written in Python would have been the *third* implementation of a shell we already had, and the second to drift. So `jorm shell` execs node against the same pack; without node it says so and points at the node's own Shell tab, which is one URL away. `-c` makes it scriptable, and POSIX exit codes reach your shell — `if jorm shell -c 'test -f /guests/x/main.py'` is a bash conditional decided by geas over an ESP32's flash.
     the whole heap; on 8 MB of PSRAM a pass stops the world for ~400 ms — past any budget you
     would pick by hand, and measuring at boot is no help (the heap is empty then and it collects
     in 12 ms). So the node *detects* collections as they happen and grows its budget to fit what

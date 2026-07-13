@@ -1,11 +1,12 @@
 {
   "name": "jormungandr",
   "private": true,
-  "description": "dev tooling only — the supervisor is MicroPython; playwright drives UI verification (tools/verify-ui.mjs)",
+  "description": "dev tooling only \u2014 the supervisor is MicroPython; playwright drives UI verification (tools/verify-ui.mjs)",
   "scripts": {
     "verify-ui": "node tools/verify-ui.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"
-  }
+  },
+  "type": "module"
 }

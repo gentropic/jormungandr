@@ -282,6 +282,31 @@ def cmd_lib(args):
         print('%-20s %6d B   imported by: %s' % (r['name'], r['bytes'], users))
 
 
+def cmd_shell(args):
+    """Drop into the node's shell — which is geas, not something written here.
+
+    The verbs already exist twice: as these subcommands, and as geas builtins in
+    supervisor/web/jorm-pack.js. A Python REPL would be the third, and the second
+    to drift. So `jorm shell` does not implement a shell; it runs the one we have,
+    with the same VFS and the same builtins the browser loads. geas is JavaScript,
+    so this needs node — and if node is not here, the shell is still one URL away.
+    """
+    import shutil
+    import subprocess
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    entry = os.path.join(root, 'tools', 'geas-cli.mjs')
+    node = shutil.which('node')
+    if not node:
+        sys.exit('jorm: geas is JavaScript, and it needs node. The same shell is '
+                 'served by the node itself — open %s and pick the Shell tab.'
+                 % args.url)
+
+    env = dict(os.environ, JORM_URL=args.url, JORM_TOKEN=args.token)
+    cmd = [node, entry] + (['-c', ' '.join(args.command)] if args.command else [])
+    raise SystemExit(subprocess.call(cmd, env=env))
+
+
 def cmd_claims(args):
     table = request(args, 'GET', '/api/claims')
     if table.get('reserved_pins'):
@@ -320,6 +345,9 @@ def main():
     p = sub.add_parser('lib', help='the shared library store')
     p.add_argument('--install', metavar='FILE.py')
     p.add_argument('--force', action='store_true')
+    p = sub.add_parser('shell', help='drop into the node shell (geas; needs node)')
+    p.add_argument('-c', dest='command', nargs=argparse.REMAINDER,
+                   help='run one command and exit')
     sub.add_parser('claims', help='the claims table')
     p = sub.add_parser('bus', help='watch bus traffic live (WS bridge)')
     p.add_argument('filters', nargs='*', help="topic filters (default: '#')")
