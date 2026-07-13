@@ -41,7 +41,9 @@ def print_kv(d):
 
 def print_lines(lines):
     for line in lines:
-        stamp = time.strftime('%H:%M:%S', time.localtime(line['ts']))
+        # ts is None until the node's clock is set; show uptime, not a fake date
+        stamp = (time.strftime('%H:%M:%S', time.localtime(line['ts'])) if line.get('ts')
+                 else '+%07.1f' % line.get('up', 0))
         text = line['text'].rstrip('\n').replace('\n', '\n               ')
         print('%s %-5s %s' % (stamp, line['level'], text))
 

@@ -13,6 +13,7 @@ import machine
 import neopixel
 
 from jorm import bus as busmod
+from jorm import clock
 from jorm import guestcfg
 from jorm.fsutil import UnsafePath, ensure_dir, safe_relpath, tree_size
 from jorm.panels import validate_panel
@@ -57,7 +58,7 @@ class Hal:
         return time.ticks_ms()
 
     def time(self):
-        return time.time()
+        return clock.now()   # Unix seconds, or uptime honestly labelled (spec §4)
 
     def rand(self, n):
         return os.urandom(n)

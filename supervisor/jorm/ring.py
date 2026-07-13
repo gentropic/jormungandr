@@ -1,5 +1,6 @@
 import asyncio
-import time
+
+from jorm import clock
 
 
 class Tap:
@@ -26,6 +27,13 @@ class Tap:
         return self.items.pop(0)
 
 
+def as_json(line):
+    """A console line at the API boundary: ts is Unix seconds, or null when the
+    node has no clock yet — never a plausible-looking lie. `up` is always true."""
+    m, level, text = line
+    return {'ts': clock.to_unix(m), 'up': round(m, 3), 'level': level, 'text': text}
+
+
 class Ring:
     """Structured log ring: (ts, level, text) tuples, JSON only at the boundary."""
 
@@ -36,7 +44,7 @@ class Ring:
         self._taps = []
 
     def append(self, level, text):
-        line = (time.time(), level, str(text))
+        line = (clock.mono(), level, str(text))
         self._lines.append(line)
         if len(self._lines) > self._size:
             self._lines.pop(0)
@@ -46,7 +54,7 @@ class Ring:
             print('[%s] %s' % (level, text))
 
     def tail(self, n=50):
-        return [{'ts': ts, 'level': lv, 'text': tx} for ts, lv, tx in self._lines[-n:]]
+        return [as_json(line) for line in self._lines[-n:]]
 
     def tap(self, qlen=64):
         tap = Tap(qlen)

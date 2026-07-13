@@ -229,13 +229,16 @@ input[type=range] { accent-color:var(--au-action); width:100%; }
     <span class="brand"><b>JORMUNGANDR</b><span class="kana">ヨルムンガンド</span></span>
     <span class="hostchip" id="hostchip">…</span>
     <span class="mast-gauges" id="mastg" hidden>
-      <span class="mgauge"><span class="lbl">Heap</span>
+      <span class="mgauge"><span class="lbl">Heap free</span>
         <span class="val"><span id="heapval">—</span>
           <svg class="spark" id="sp-heap" width="72" height="22" viewBox="0 0 72 22"></svg></span></span>
       <span class="mgauge"><span class="lbl">Uptime</span><span class="val" id="upval">—</span></span>
       <span class="mgauge"><span class="lbl">Guests</span><span class="val" id="gval">—</span></span>
       <span class="mgauge"><span class="lbl">Link · Tick</span>
         <span class="val"><span id="link" class="down">◉</span><span id="tick">◉</span></span></span>
+      <span class="badge caution" id="clockchip" hidden
+            title="the node's clock is not NTP-synced; timestamps are uptime, not wall clock"
+        >⚠ clock unsynced</span>
       <button class="btn ghost" id="themebtn" title="theme">◐</button>
     </span>
   </header>
@@ -261,6 +264,7 @@ const S = {
   ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
   conWS: null, logTimer: null, busPaused: false,
   panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
+  clockOk: true,
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -303,7 +307,11 @@ function spark(el, data) {
     `<circle class="sp-dot" cx="${last[0]}" cy="${last[1]}" r="2"/>`;
 }
 
-const hhmmss = ts => new Date(ts * 1000).toTimeString().slice(0, 8);
+// ts is null when the node has no clock yet. Render uptime (+h:mm:ss) rather
+// than a plausible-looking lie; once NTP lands the node dates the past too.
+const hhmmss = l => l.ts
+  ? new Date(l.ts * 1000).toTimeString().slice(0, 8)
+  : '+' + new Date((l.up || 0) * 1000).toISOString().slice(11, 19);
 function termLine(host, html, cls) {
   const row = document.createElement('div');
   row.className = 'row' + (cls ? ' ' + cls : '');
@@ -313,7 +321,7 @@ function termLine(host, html, cls) {
   host.scrollTop = host.scrollHeight;
 }
 const consoleHTML = l =>
-  `<span class="t">${hhmmss(l.ts)}</span><span class="lv ${l.level === 'sys' ? 'sys' : l.level === 'error' ? 'err' : ''}">${esc(l.level)}</span>${esc(l.text)}`;
+  `<span class="t">${hhmmss(l)}</span><span class="lv ${l.level === 'sys' ? 'sys' : l.level === 'error' ? 'err' : ''}">${esc(l.level)}</span>${esc(l.text)}`;
 
 // ── websocket: one socket, $sys/# always, # while the bus tab is open ──────
 function connect() {
@@ -436,6 +444,8 @@ async function refresh() {
     for (const g of list) S.guests[g.id] = g;
     document.title = 'jorm · ' + S.node.hostname;
     $('#hostchip').textContent = S.node.hostname;
+    S.clockOk = !S.node.clock || S.node.clock.synced;
+    $('#clockchip').hidden = S.clockOk;
     $('#mastg').hidden = false;
     renderTree(); renderMastGauges(); renderMain();
   } catch (e) {
@@ -536,6 +546,9 @@ function renderNode(main) {
           <dt>version</dt><dd>${esc(n.version)}</dd>
           <dt>ip</dt><dd>${esc(n.ip || '—')}</dd>
           <dt>runtimes</dt><dd>${esc((n.runtimes || []).join(' · '))}</dd>
+          <dt>clock</dt><dd>${n.clock && n.clock.synced
+            ? esc(n.clock.source || 'ntp') + ' · ' + new Date(n.clock.last_sync * 1000).toLocaleString()
+            : '<span style="color:var(--au-warn)">⚠ unsynced — timestamps are uptime</span>'}</dd>
         </dl></div></div>
       <div class="panel"><div class="panel-hd"><span>Guests</span><span>${Object.keys(S.guests).length} installed</span></div>
         <div class="panel-bd"><table class="cl">

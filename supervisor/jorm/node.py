@@ -4,6 +4,7 @@ import sys
 import time
 
 from jorm import VERSION, SPEC
+from jorm import clock
 from jorm.ring import Ring
 
 
@@ -37,4 +38,5 @@ class Node:
             'heap_free': gc.mem_free(),
             'heap_alloc': gc.mem_alloc(),
             'uptime_ms': time.ticks_diff(time.ticks_ms(), self._boot),
+            'clock': clock.status(),
         }

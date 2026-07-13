@@ -11,6 +11,7 @@ import time
 
 import machine
 
+from jorm import clock
 from jorm.bus import Bus, BusError
 from jorm.claims import Claims
 from jorm.fsutil import ensure_dir, write_atomic
@@ -72,10 +73,23 @@ class Supervisor:
         except BusError as e:
             self.node.log.append('error', 'sys publish %s: %s' % (topic, e))
 
+    async def ntp(self):
+        """Sync at boot, then daily (spec §4). A node whose clock never sets says
+        so in /api/node rather than quietly serving 1970 to every console pane."""
+        tries = 0
+        while True:
+            if clock.sync(self.node.log):
+                await asyncio.sleep(86400)   # daily, per spec §4
+                tries = 0
+            else:
+                tries += 1
+                await asyncio.sleep(min(300, 5 * 2 ** tries))  # 10s, 20s, 40s … 5 min
+
     async def telemetry(self):
         n = 0
         while True:
-            self.sys_publish('$sys/clock/tick', {'ts': time.time(), 'n': n})
+            self.sys_publish('$sys/clock/tick',
+                             {'ts': clock.now(), 'n': n, 'synced': clock.status()['synced']})
             if n % 5 == 0:
                 self.sys_publish('$sys/heap',
                                  {'free': gc.mem_free(), 'alloc': gc.mem_alloc()},

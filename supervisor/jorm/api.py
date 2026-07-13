@@ -13,6 +13,7 @@ from jorm.guests import RefusedError
 from jorm.manifest import ManifestError
 from jorm.claims import ClaimError
 from jorm.panels import PanelError
+from jorm.ring import as_json
 
 
 def create_app(node, sup):
@@ -183,8 +184,7 @@ def create_app(node, sup):
 
         async def sender():
             while True:
-                ts, level, text = await tap.get()
-                await ws.send(json.dumps({'ts': ts, 'level': level, 'text': text}))
+                await ws.send(json.dumps(as_json(await tap.get())))
 
         for line in guest.console.tail(20):
             await ws.send(json.dumps(line))
