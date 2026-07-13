@@ -511,6 +511,79 @@ def cmd_retained(args):
         print('%-32s %s' % (topic, json.dumps(table[topic])))
 
 
+def cmd_leaf(args):
+    """Manage a smart leaf's guests from a central node, over the bus.
+
+    A leaf runs no HTTP server, so this doesn't call it — it publishes a command on
+    THIS node's bus, the leaf (subscribed to cmd/leaf/<name>/#) executes it, and
+    reports back on leaf/<name>/result. We subscribe to the result before publishing
+    so the round trip can't race us.
+    """
+    name = args.name
+    verb = args.verb or 'guests'
+
+    if verb == 'guests':
+        table = request(args, 'GET', '/api/bus/retained')
+        if ('$sys/leaf/' + name) not in table:
+            sys.exit('jorm: no leaf "%s" seen here — is it up and uplinked?' % name)
+        prefix = 'leaf/%s/guest/' % name
+        rows = {k[len(prefix):]: v for k, v in table.items() if k.startswith(prefix)}
+        if not rows:
+            print('leaf "%s": no guests installed' % name)
+            return
+        for gid in sorted(rows):
+            st = rows[gid].get('state', '?') if isinstance(rows[gid], dict) else '?'
+            print('%-20s %s' % (gid, st))
+        return
+
+    req = '%d' % int(time.time() * 1000)
+    if verb == 'install':
+        d = args.guest
+        if not d or not os.path.isdir(d):
+            sys.exit('jorm leaf %s install <bundle-dir>' % name)
+        mpath = os.path.join(d, 'manifest.json')
+        if not os.path.isfile(mpath):
+            sys.exit('jorm: %s has no manifest.json' % d)
+        manifest = json.load(open(mpath, encoding='utf-8'))
+        files = {}
+        for fn in os.listdir(d):
+            p = os.path.join(d, fn)
+            if fn != 'manifest.json' and os.path.isfile(p):
+                files[fn] = open(p, encoding='utf-8').read()
+        msg = {'req': req, 'manifest': manifest, 'files': files}
+        label = 'install ' + manifest.get('id', '?')
+    else:
+        if not args.guest:
+            sys.exit('jorm leaf %s %s <guest>' % (name, verb))
+        msg = {'req': req, 'guest': args.guest}
+        label = '%s %s' % (verb, args.guest)
+
+    # subscribe to the result first, then publish the command
+    sock = ws_connect(args.url, '/api/bus', args.token)
+    try:
+        ws_send_text(sock, json.dumps({'op': 'sub', 'filters': ['leaf/%s/result' % name]}))
+        request(args, 'POST', '/api/bus/publish',
+                {'topic': 'cmd/leaf/%s/%s' % (name, verb), 'msg': msg})
+        print('sent "%s" to leaf "%s" — waiting for the result…' % (label, name))
+        sock.settimeout(10)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            frame = json.loads(ws_recv_text(sock))
+            if frame.get('topic') != 'leaf/%s/result' % name:
+                continue
+            r = frame.get('msg') or {}
+            if r.get('req') != req:
+                continue
+            if r.get('ok'):
+                print('  ok: %s' % label)
+            else:
+                sys.exit('  failed: %s' % r.get('error'))
+            return
+        print('  no result within 10 s — the leaf may be offline')
+    finally:
+        sock.close()
+
+
 def cmd_config(args):
     if not args.set:
         got = request(args, 'GET', '/api/guests/%s/config' % args.id)
@@ -667,6 +740,11 @@ def main():
     p.add_argument('--token', default=os.environ.get('JORM_TOKEN', ''))
     sub.add_parser('claims', help='the claims table')
     sub.add_parser('usb', help='the USB device plan (interfaces, endpoints, §8)')
+    p = sub.add_parser('leaf', help="manage a smart leaf's guests over the bus (two §7)")
+    p.add_argument('name', help='the leaf hostname')
+    p.add_argument('verb', nargs='?',
+                   choices=['guests', 'start', 'stop', 'restart', 'rm', 'install'])
+    p.add_argument('guest', nargs='?', help='guest id (or a bundle dir, for install)')
     p = sub.add_parser('bus', help='watch bus traffic live (WS bridge)')
     p.add_argument('filters', nargs='*', help="topic filters (default: '#')")
     p.add_argument('-c', '--count', type=int, default=0, help='exit after N messages')
