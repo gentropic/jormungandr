@@ -25,14 +25,17 @@ URL = os.environ.get('JORM_URL', 'http://jorm-c510.local').rstrip('/')
 TOKEN = os.environ.get('JORM_TOKEN', '')
 
 
-def gzip_ui():
-    src_path = os.path.join(ROOT, 'supervisor', 'ui.html')
+def gzip_file(src_path):
     out = src_path + '.gz'
     with open(src_path, 'rb') as f:
         raw = f.read()
     with open(out, 'wb') as f:
         f.write(gzip.compress(raw, 9))
     return out
+
+
+def gzip_ui():
+    return gzip_file(os.path.join(ROOT, 'supervisor', 'ui.html'))
 
 
 def api(method, path, body=None, raw=False):
@@ -57,6 +60,12 @@ def local_files():
     for name in sorted(os.listdir(jorm)):
         if name.endswith('.py'):
             yield os.path.join(jorm, name), 'jorm/' + name
+    # the shell surface: terminal + shell, gzipped only. Nothing fetches the
+    # plain copy, and the node has 13 MB — but it does not have 13 MB to waste.
+    web = os.path.join(ROOT, 'supervisor', 'web')
+    for name in sorted(os.listdir(web)):
+        if name.endswith(('.js', '.css')):
+            yield gzip_file(os.path.join(web, name)), 'web/' + name + '.gz'
 
 
 def main():
@@ -68,13 +77,26 @@ def main():
           % (before['uptime_ms'] / 1000, before['heap_free'] / 1048576))
 
     print('== staging')
-    n = 0
+    n, refused = 0, []
     for local, remote in local_files():
         with open(local, 'rb') as f:
             body = f.read()
-        api('PUT', '/api/node/files/' + remote, body, raw=True)
+        try:
+            api('PUT', '/api/node/files/' + remote, body, raw=True)
+        except urllib.error.HTTPError as e:
+            if e.code != 409:
+                raise
+            # The running supervisor does not know this path is updatable yet —
+            # the permission to ship these files is itself in the files we are
+            # shipping. Push what it will take, then come back for the rest.
+            refused.append(remote)
+            continue
         print('   %-22s %6d B' % (remote, len(body)))
         n += 1
+    if refused:
+        print('   (this supervisor refuses %d path(s) it does not know yet: %s)'
+              % (len(refused), ', '.join(refused)))
+        print('   they go in a second pass, once the new one is running')
 
     print('== applying (the node reboots; the next boot is a trial)')
     api('POST', '/api/node/update')
@@ -97,17 +119,25 @@ def main():
                  'previous supervisor on its next boot — press reset, or power-cycle.')
 
     print('== node is back. waiting for it to confirm the trial', end='', flush=True)
-    deadline = time.time() + 45
+    deadline = time.time() + 60
     while time.time() < deadline:
         time.sleep(3)
         print('.', end='', flush=True)
-        st = api('GET', '/api/node/update')
+        try:
+            st = api('GET', '/api/node/update')
+        except (urllib.error.URLError, OSError):
+            continue      # a node mid-GC is not a node that failed
+
         if st['rolled_back']:
             print()
             sys.exit('REVERTED: %s' % st['rolled_back'])
         if not st['trial']:
             print()
             print('== confirmed. %d file(s) live on %s' % (n, before['hostname']))
+            if refused:
+                print()
+                print('== second pass: the new supervisor knows these paths now')
+                return main()
             return
     print()
     print('the node is up but has not confirmed yet — check GET /api/node/update')

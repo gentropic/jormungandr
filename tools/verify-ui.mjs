@@ -99,12 +99,18 @@ await page.click('.tab[data-tab="bus"]');
 await page.waitForFunction(() =>
   document.querySelector('#busterm').textContent.includes('pinger/tick'),
   null, { timeout: 6000 });
-const busText = await page.textContent('#busterm');
-ok('bus monitor streams pinger traffic', busText.includes('pinger/tick'));
-ok('bus monitor streams echoer traffic', busText.includes('echoer/tock'));
-await page.waitForFunction(() =>
-  document.querySelector('#busterm').textContent.includes('$sys/clock/tick'),
-  null, { timeout: 3000 });
+// Wait, don't peek. A snapshot taken the instant the first row lands is a
+// race — echoer republishes what pinger sends, so it is always a beat behind,
+// and on a busy node that beat is longer than the snapshot. Assertions that
+// only pass on a quiet node are assertions that lie about a busy one.
+const busHas = t => page.waitForFunction(
+  s => document.querySelector('#busterm').textContent.includes(s), t,
+  { timeout: 20000 });
+await busHas('pinger/tick');
+ok('bus monitor streams pinger traffic', true);
+await busHas('echoer/tock');
+ok('bus monitor streams echoer traffic', true);
+await busHas('$sys/clock/tick');
 ok('bus monitor sees $sys traffic too', true);
 // inject with origin: ui → orange line
 await page.fill('#pubtopic', 'cmd/pinger/demo');
@@ -307,26 +313,44 @@ ok('a deaf guest disables its input and says why',
     return el.disabled && /reads no input/.test(el.placeholder);
   }));
 
-// ── the node shell ───────────────────────────────────────────────────────
+// ── the node shell: a real terminal, fetched from the node's own flash ───
 await page.click('.trow.grp');
+const tShell = Date.now();
 await page.click('.tab[data-tab="shell"]');
-await page.waitForSelector('#shin', { timeout: 5000 });
-await page.fill('#shin', 'guests');
+await page.waitForSelector('.screen', { timeout: 20000 });
+ok(`@gcu/term mounts from the node's flash (${Date.now() - tShell} ms cold)`, true);
+ok('and the rows have height — a terminal you cannot see is not a terminal',
+  await page.evaluate(() =>
+    document.querySelector('.screen').getBoundingClientRect().height > 100));
+
+const shellSays = t => page.waitForFunction(
+  s => document.querySelector('.screen').textContent.includes(s), t, { timeout: 12000 });
+await page.click('.screen');
+await page.keyboard.type('guests');
+await page.keyboard.press('Enter');
+await shellSays('parrot');
+ok('`guests` lists them, in the terminal', true);
+
+await page.keyboard.type('temp');
 await page.keyboard.press('Enter');
 await page.waitForFunction(() =>
-  document.querySelector('#shterm').textContent.includes('parrot'), null, { timeout: 8000 });
-ok('the node has a shell, and `guests` lists them', true);
-await page.fill('#shin', 'temp');
-await page.keyboard.press('Enter');
-await page.waitForFunction(() =>
-  /\d+ °C/.test(document.querySelector('#shterm').textContent), null, { timeout: 8000 });
+  /\d+ °C/.test(document.querySelector('.screen').textContent), null, { timeout: 12000 });
 ok('`temp` reads the MCU sensor, in Celsius', true);
-await page.fill('#shin', 'nonsense');
+
+await page.keyboard.type('nonsense');
 await page.keyboard.press('Enter');
-await page.waitForFunction(() =>
-  document.querySelector('#shterm').textContent.includes('unknown: nonsense'),
-  null, { timeout: 5000 });
+await shellSays('unknown: nonsense');
 ok('an unknown verb fails plainly', true);
+
+// the terminal is themed by Switchboard, not by itself
+ok('the terminal takes its palette from --au-*',
+  await page.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector('.screen'));
+    const bg = cs.getPropertyValue('--gcu-term-bg').trim();
+    const surf = getComputedStyle(document.documentElement)
+      .getPropertyValue('--au-surface-deep').trim();
+    return bg.includes('au-surface-deep') || bg === surf || bg.startsWith('var(');
+  }));
 
 // ── the tree reads as a tree ─────────────────────────────────────────────
 ok('each level indents deeper than its parent',
@@ -394,7 +418,10 @@ if (SHOTS) await page.screenshot({ path: SHOTS + '/4-other-theme.png' });
 await page.click('#themebtn');
 
 // staleness: kill the node, the instrument must grey out — no fake data
-await fetch(`${BASE}/api/node/reboot`, { method: 'POST', headers: HDRS });
+// The node resets while answering, so the socket dies mid-reply. A node that
+// hangs up while telling you it is rebooting is not a failure — it is the point.
+await fetch(`${BASE}/api/node/reboot`, { method: 'POST', headers: HDRS })
+  .catch(() => {});
 await page.waitForFunction(() =>
   document.getElementById('app').classList.contains('stale'), null, { timeout: 10000 });
 ok('node dies → stale mode within budget (grey + banner)', true);

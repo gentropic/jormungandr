@@ -30,3 +30,5 @@ sim/fs/*
 
 # built artifact: the tool gzips ui.html at push time
 supervisor/ui.html.gz
+
+supervisor/web/*.gz

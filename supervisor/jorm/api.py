@@ -56,8 +56,14 @@ def create_app(node, sup):
 
     @app.before_request
     async def auth(req):
-        if req.method == 'GET' and req.path in ('/', '/favicon.ico'):
-            return  # the app shell is public; every byte of data behind it is not
+        # The app shell is public; every byte of data behind it is not. /web/* is
+        # shell too — the terminal emulator and the shell that drives it are code,
+        # not secrets, and a browser cannot put a bearer header on a dynamic
+        # import() any more than it can on a WebSocket. The token still guards
+        # every /api/ call the shell then makes, which is where the node lives.
+        if req.method == 'GET' and (req.path in ('/', '/favicon.ico')
+                                    or req.path.startswith('/web/')):
+            return
         # browsers can't set headers on a WebSocket, so ?token= is accepted too
         token = req.headers.get('Authorization', '')
         token = token[7:] if token.startswith('Bearer ') else req.args.get('token', '')
@@ -79,6 +85,27 @@ def create_app(node, sup):
             return send_file('ui.html', max_age=0)
         except OSError:
             return {'error': 'ui.html not on this node — deploy it beside main.py'}, 404
+
+    @app.get('/web/<path:path>')
+    async def web(req, path):
+        # The shell surface: a terminal emulator and the shell that drives it.
+        # Lazily fetched by the UI on first open, so a phone loading the dashboard
+        # never pays for a terminal it did not ask for. Cached hard — it only
+        # changes when the supervisor does, and the supervisor reboots when it does.
+        path = safe_relpath(path)
+        ctype = ('text/javascript' if path.endswith('.js')
+                 else 'text/css' if path.endswith('.css')
+                 else 'application/octet-stream')
+        if 'gzip' in req.headers.get('Accept-Encoding', ''):
+            try:
+                return send_file('web/' + path + '.gz', compressed=True,
+                                 content_type=ctype, max_age=86400)
+            except OSError:
+                pass
+        try:
+            return send_file('web/' + path, content_type=ctype, max_age=86400)
+        except OSError:
+            return {'error': 'no such asset'}, 404
 
     @app.errorhandler(RefusedError)
     async def refused(req, e):
@@ -143,7 +170,7 @@ def create_app(node, sup):
 
     # -- supervisor OTA (spec §11): stage, update, trial, confirm/rollback ----
 
-    OTA_ROOTS = ('main.py', 'boot.py', 'ui.html', 'jorm/', 'lib/')
+    OTA_ROOTS = ('main.py', 'boot.py', 'ui.html', 'jorm/', 'lib/', 'web/')
 
     @app.get('/api/node/update')
     async def api_update_status(req):

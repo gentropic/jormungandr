@@ -211,6 +211,91 @@ svg.spark { display:block; }
 .term .in { color:var(--au-action); }
 .term .row.echo { color:var(--au-action); }
 
+/* @gcu/term's structural sheet, inlined, plus the one thing that matters: its
+   palette is CSS custom properties, so mapping --gcu-term-* onto Switchboard's
+   --au-* themes the terminal in both light and dark without it knowing either
+   word. That is why it is @gcu/term and not xterm.js. */
+/*
+ * @gcu/term — structural CSS
+ * Required for the renderer to behave correctly. The position,
+ * pointer-events, mix-blend-mode, contain, and user-select declarations
+ * encode the rendering contract; do not override them. Decorative styling
+ * (font, colors, cursor color) lives in term-default.css and is intended
+ * to be replaced by the host.
+ */
+
+.screen {
+  position: relative;
+  display: block;
+  white-space: pre;
+  overflow: hidden;
+  user-select: text;
+  cursor: text;
+}
+.screen .row {
+  display: block;
+  white-space: pre;
+  contain: layout style;
+}
+.screen .cur {
+  position: absolute;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  z-index: 2;
+}
+.screen.app-mouse {
+  user-select: none;
+  cursor: default;
+}
+
+.termhost {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.termhost > textarea {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  margin: 0; padding: 0; border: 0; outline: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font: inherit;
+  pointer-events: none;
+  z-index: 1;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+}
+/* the box is ours; the screen's layout is term.css's contract — do not fight it */
+#shellhost { background:var(--au-surface-deep); border:1px solid var(--au-border);
+  border-radius:var(--au-radius-lg); padding:.5rem .6rem; overflow:auto; min-height:24rem; }
+.screen {
+  font: 400 13px/1.35 var(--au-font-mono);
+  color: var(--au-fg);
+  background: var(--au-surface-deep);
+  --gcu-term-bg: var(--au-surface-deep);
+  --gcu-term-fg: var(--au-fg);
+  --gcu-term-cursor: var(--au-action);
+  --gcu-term-selection: var(--au-selected-soft);
+  --gcu-term-color-0:  var(--au-surface-deep);   --gcu-term-color-8:  var(--au-fg-soft);
+  --gcu-term-color-1:  var(--au-error);          --gcu-term-color-9:  var(--au-error);
+  --gcu-term-color-2:  var(--au-success);        --gcu-term-color-10: var(--au-success);
+  --gcu-term-color-3:  var(--au-warn);           --gcu-term-color-11: var(--au-warn);
+  --gcu-term-color-4:  var(--au-info);           --gcu-term-color-12: var(--au-info);
+  --gcu-term-color-5:  var(--au-selected);       --gcu-term-color-13: var(--au-selected);
+  --gcu-term-color-6:  var(--au-info);           --gcu-term-color-14: var(--au-info);
+  --gcu-term-color-7:  var(--au-fg);             --gcu-term-color-15: var(--au-fg);
+}
+/* An empty row div collapses; term-default.css gives it an explicit height for
+   exactly that reason, and I had inlined only the structural sheet — so every
+   row was 0px and the whole terminal was invisible while rendering perfectly. */
+.screen .row { height: 1.35em; }
+.screen .cur { background: var(--au-action); }
+#shellhost .note { padding:.6rem; }
+
 .note { font:400 .72rem var(--au-font-mono); color:var(--au-fg-soft); }
 .busbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.6rem;
   font:400 .78rem var(--au-font-mono); }
@@ -351,7 +436,7 @@ const S = {
   ws: null, scope: ['$sys/#'], lastMsg: 0, retry: 0,
   conWS: null, logTimer: null, busPaused: false,
   panels: {}, bindWatch: {}, bindState: {}, liveWidgets: [],
-  clockOk: true, temp: null, drops: 0,
+  clockOk: true, temp: null, drops: 0, watchers: [],
   open: { dc: true, node: true }, renaming: false,
 };
 try {
@@ -604,6 +689,18 @@ function setScope(filters) {
   if (same || !S.ws || S.ws.readyState !== 1) return;
   S.ws.send(JSON.stringify({ op: 'sub', filters }));
 }
+function matchTopic(filter, topic) {
+  // the broker's own rules (spec §5): + is one segment, # is the tail, and a
+  // wildcard never crosses into a $-root — you subscribe to $sys by name
+  const f = filter.split('/'), t = topic.split('/');
+  if (t[0].startsWith('$') && (f[0] === '+' || f[0] === '#')) return false;
+  for (let i = 0; i < f.length; i++) {
+    if (f[i] === '#') return true;
+    if (i >= t.length || (f[i] !== '+' && f[i] !== t[i])) return false;
+  }
+  return f.length === t.length;
+}
+
 function currentScope() {
   const filters = ['$sys/#', '$ui/#'];
   if (S.sel === null && S.tabNode === 'bus') filters.push('#');
@@ -681,6 +778,10 @@ function route(topic, msg) {
     S.bindState[topic] = msg;
     for (const reg of S.liveWidgets)
       if (reg.topic === topic) applyWidget(reg, resolve(msg, reg.w.path));
+  }
+  // the shell's `sub` rides the socket the UI already holds — no second connection
+  for (const wch of S.watchers) {
+    if (matchTopic(wch.filter, topic)) wch.onMsg(topic, msg);
   }
   const bus = $('#busterm');
   if (bus && !S.busPaused) {
@@ -838,6 +939,7 @@ function setTab(tab) {
 function teardown() {
   if (S.conWS) { try { S.conWS.close(); } catch (e) {} S.conWS = null; }
   if (S.logTimer) { clearInterval(S.logTimer); S.logTimer = null; }
+  if (shellDispose) { try { shellDispose(); } catch (e) {} shellDispose = null; }
 }
 
 function tabsHTML(tabs, active) {
@@ -916,17 +1018,12 @@ function renderNode(main) {
       </div>
       <div class="term" id="busterm"></div>`;
   } else if (tab === 'shell') {
-    // Not POSIX, and not pretending to be. The node has no shell and should not
-    // grow one — a Unix on the MCU would duplicate the very API it sits on, and
-    // cost RAM on a machine whose whole thesis is honesty about scarcity. This
-    // is the jorm verbs with a prompt, so the node is manageable from a phone.
-    // The real shell is geas, in a browser, over this same API — a client's job.
-    body = `<div class="term" id="shterm"></div>
-      <div class="cline">
-        <span class="prompt">${esc((S.node && S.node.hostname) || 'jorm')} ▸</span>
-        <input id="shin" autocomplete="off" placeholder="help">
-      </div>
-      <p class="note" style="margin:.4rem 0 0">the jorm verbs · ↑/↓ history · Tab completes</p>`;
+    // A real terminal (@gcu/term), fetched from the node's own flash on first
+    // open. The main UI stays ~21 KB gzipped; this costs 43 KB more, once,
+    // cached — so a phone loading the dashboard never pays for a terminal it did
+    // not ask for. Still not a Unix: the verbs are jorm's, the filesystem is the
+    // API. geas is the next surface and binds to the same API.
+    body = `<div id="shellhost"><p class="note">loading the terminal…</p></div>`;
   } else if (tab === 'claims') {
     body = `<div class="panel"><div class="panel-hd"><span>Claims table</span><span>who owns what</span></div>
       <div class="panel-bd" id="claimsbody"><span class="note">loading…</span></div></div>`;
@@ -948,7 +1045,7 @@ function renderNode(main) {
       } catch (e) { toast('publish: ' + e.message, 'fault'); }
     };
   }
-  if (tab === 'shell') openShell();
+  if (tab === 'shell') openShell();   // lazily imports the terminal
   if (tab === 'claims') loadClaims();
   if (tab === 'log') {
     loadLog();
@@ -956,156 +1053,42 @@ function renderNode(main) {
   }
 }
 
-// ── the node shell ────────────────────────────────────────────────────────
-const SH_HELP = [
-  'guests                       list installed guests',
-  'start|stop|restart <id>      lifecycle',
-  'rm <id>                      remove a stopped guest',
-  'console <id>                 open a guest console',
-  'claims                       who owns which pin',
-  'log [n]                      the supervisor log',
-  'retained                     the retained bus table',
-  'pub <topic> [json]           inject a message',
-  'lib                          the shared library store',
-  'node                         board, heap, uptime, clock',
-  'temp                         the MCU temperature, in Celsius',
-  'reboot                       reboot the node',
-  'clear                        clear this transcript',
-];
-const SH_VERBS = ['guests', 'start', 'stop', 'restart', 'rm', 'console', 'claims',
-  'log', 'retained', 'pub', 'lib', 'node', 'temp', 'reboot', 'clear', 'help'];
+// ── the node shell: a real terminal, fetched on demand ────────────────────
+//
+// The bundle (@gcu/term + the shell) lives in the node's own flash and is
+// fetched the first time you open this tab. That is the whole reason it is lazy:
+// the dashboard on a phone should not carry a terminal emulator it will never
+// use, and the node has 13 MB of flash but only ~90 KB/s of wire.
+let shellDispose = null;
 
-function shWrite(html, cls) {
-  if (!S.shlog) S.shlog = [];
-  S.shlog.push([html, cls]);
-  if (S.shlog.length > SCROLLBACK) S.shlog.shift();
-  const host = $('#shterm');
-  if (host) termLine(host, html, cls);
-}
-function shSay(text) { shWrite(esc(text)); }
-
-async function shRun(input) {
-  const [verb, ...rest] = input.trim().split(/\s+/);
-  const arg = rest[0];
-  const need = () => { if (!arg) throw new Error('which guest?'); return arg; };
-
-  switch (verb) {
-    case '': return;
-    case 'help': SH_HELP.forEach(shSay); return;
-    case 'clear': S.shlog = []; $('#shterm').innerHTML = ''; return;
-
-    case 'guests': {
-      const gs = await api('GET', '/api/guests');
-      if (!gs.length) return shSay('no guests installed');
-      for (const g of gs)
-        shWrite(`<span class="topic">${g.num} ${esc(g.id)}</span>` +
-          `<span class="${g.state === 'running' ? 'sys' : g.state === 'crashed' ? 'err' : ''}">${esc(g.state)}</span>` +
-          `  ${esc(g.status || '')}${g.suspected ? ' ⚠ suspected' : ''}`);
-      return;
-    }
-    case 'start': case 'stop': case 'restart':
-      shSay(`${verb} ${need()}: ` +
-        (await api('POST', `/api/guests/${need()}/${verb}`)).state);
-      return;
-    case 'rm':
-      await api('DELETE', '/api/guests/' + need());
-      shSay('removed ' + arg);
-      refresh();
-      return;
-    case 'console':
-      select(need()); setTab('console');
-      return;
-    case 'claims': {
-      const t = await api('GET', '/api/claims');
-      if (t.reserved_pins.length) shSay('reserved: pin ' + t.reserved_pins.join(', '));
-      if (!t.pins.length && !t.i2c.length) return shSay('nothing passed through');
-      for (const p of t.pins) shSay(`pin ${p.pin}  ${p.mode}  ${p.owners.join(' · ')}`);
-      for (const e of t.i2c) shSay(`i2c ${e.bus}/0x${e.addr.toString(16)}  ${e.owner}`);
-      return;
-    }
-    case 'log': {
-      const got = await api('GET', '/api/node/log?n=' + (arg || 30));
-      for (const l of got.lines) shWrite(consoleHTML(l));
-      return;
-    }
-    case 'retained': {
-      const t = await api('GET', '/api/bus/retained');
-      for (const topic of Object.keys(t).sort())
-        shWrite(`<span class="topic">${esc(topic)}</span>${esc(JSON.stringify(t[topic]))}`);
-      return;
-    }
-    case 'pub': {
-      if (!arg) throw new Error('pub <topic> [json]');
-      let msg = rest.slice(1).join(' ');
-      try { msg = JSON.parse(msg); } catch (e) { if (!msg) msg = null; }
-      const r = await api('POST', '/api/bus/publish',
-        { topic: arg, msg: (msg && typeof msg === 'object') ? { ...msg, origin: 'ui' } : msg });
-      shSay(`published ${arg} → ${r.delivered} subscriber(s)`);
-      return;
-    }
-    case 'lib': {
-      const rows = await api('GET', '/api/lib');
-      if (!rows.length) return shSay('the library store is empty');
-      for (const r of rows)
-        shSay(`${r.name}  ${r.bytes} B  imported by: ${r.imported_by.join(', ') || '—'}`);
-      return;
-    }
-    case 'node': {
-      const n = await api('GET', '/api/node');
-      shSay(`${n.hostname} · ${n.board}`);
-      shSay(`heap free ${(n.heap_free / 1048576).toFixed(2)} MB · up ${(n.uptime_ms / 1000).toFixed(0)} s`);
-      shSay(`clock: ${n.clock.synced ? n.clock.source : 'UNSYNCED — timestamps are uptime'}`);
-      return;
-    }
-    case 'temp':
-      shSay(S.temp == null ? 'no reading yet' : `${S.temp} °C`);
-      return;
-    case 'reboot':
-      await api('POST', '/api/node/reboot');
-      shSay('rebooting…');
-      return;
-    default:
-      throw new Error(`unknown: ${verb} — try 'help'`);
+async function openShell() {
+  const host = $('#shellhost');
+  if (!host) return;
+  try {
+    const { mountShell } = await import('/web/shell.js');
+    shellDispose = mountShell(host, {
+      api,
+      state: S,
+      refresh,
+      toast,
+      // a live bus tap for `sub`, over the socket the UI already holds open
+      watch: (filter, onMsg) => {
+        const reg = { filter, onMsg };
+        S.watchers.push(reg);
+        S.bindWatch[filter] = 1;
+        setScope(currentScope());
+        return () => {
+          S.watchers = S.watchers.filter(x => x !== reg);
+          delete S.bindWatch[filter];
+          setScope(currentScope());
+        };
+      },
+    });
+  } catch (e) {
+    host.innerHTML = `<p class="note" style="color:var(--au-error)">` +
+      `the terminal did not load: ${esc(e.message)}<br>` +
+      `it is served from the node at /web/shell.js — check the node has a web/ dir</p>`;
   }
-}
-
-function openShell() {
-  const line = $('#shin');
-  if (!line) return;
-  if (!S.shhist) S.shhist = [];
-  let pos = S.shhist.length;
-  // the transcript lives in state, so leaving the tab and coming back — or any
-  // repaint — finds it where you left it, the way a terminal does
-  const host = $('#shterm');
-  if (S.shlog && S.shlog.length) {
-    for (const [html, cls] of S.shlog) termLine(host, html, cls);
-  } else {
-    shSay(`${(S.node && S.node.hostname) || 'jorm'} — the jorm verbs. 'help' lists them.`);
-  }
-  line.focus();
-  line.onkeydown = async ev => {
-    if (ev.key === 'Tab') {
-      ev.preventDefault();
-      const hit = SH_VERBS.filter(v => v.startsWith(line.value));
-      if (hit.length === 1) line.value = hit[0] + ' ';
-      else if (hit.length > 1) shSay(hit.join('  '));
-      return;
-    }
-    if (ev.key === 'ArrowUp') { ev.preventDefault();
-      if (pos > 0) line.value = S.shhist[--pos] || ''; return; }
-    if (ev.key === 'ArrowDown') { ev.preventDefault();
-      pos = Math.min(pos + 1, S.shhist.length);
-      line.value = S.shhist[pos] || ''; return; }
-    if (ev.key !== 'Enter' || !line.value.trim()) return;
-
-    const input = line.value;
-    line.value = '';
-    S.shhist.push(input);
-    pos = S.shhist.length;
-    shWrite(`<span class="prompt" style="color:var(--au-action)">▸ </span>${esc(input)}`, 'echo');
-    try { await shRun(input); }
-    catch (e) { shWrite(`<span class="err">✗ ${esc(e.message)}</span>`); }
-  };
 }
 
 async function loadClaims() {

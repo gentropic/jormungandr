@@ -130,6 +130,28 @@ localStorage keyed by node URL; the WS uses `?token=` (browsers can't set header
   its own messages (spec §5) — and is told so, in caution, because a monitor that
   quietly drops is a monitor that lies about what the bus carried.
 
+## 4c. The terminal (2026-07-13)
+
+The Shell tab is a real terminal — **@gcu/term**, served from the node's own flash
+and fetched *lazily*, on first open. The dashboard on a phone never pays for an
+emulator it will not use; the desktop pays 21 KB gzipped, once, cached.
+
+**@gcu/term, not xterm.js**, for three reasons in order: it reads its palette from
+CSS custom properties (`--gcu-term-*`), so mapping those onto Switchboard's
+`--au-*` themes it in both light and dark **without it knowing either word** — the
+one thing xterm.js cannot do without a bridge, and the one thing that would make it
+the only object on the node that disobeys the design system. It is zero-dependency.
+And it is a third of the size (74 KB vs ~250 KB).
+
+`/web/*` is **app shell, not data**: served without a token, exactly like `/`. A
+browser cannot put a bearer header on a dynamic `import()` any more than on a
+WebSocket, and the code is not the secret — every `/api/` call it then makes still
+needs the token, which is where the node actually lives.
+
+Line editing (echo, backspace, history, Tab, ^C, ^L) is the **shell's** job, not the
+terminal's: `Input` hands over keystrokes the way a pty does. That is the work an
+`<input type=text>` had been quietly doing for us, and it is worth naming.
+
 ## 5. Decisions (ratified 2026-07-12, against mock zero)
 
 1. **Masthead carries link + tick**; drop counters live in the node Summary readout,

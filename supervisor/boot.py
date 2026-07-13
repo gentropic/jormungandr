@@ -100,6 +100,10 @@ def _rollback():
 
 def _apply():
     print('[sys] applying staged update')
+    try:
+        os.remove('.rolled-back')   # stale evidence: this is a NEW attempt
+    except OSError:
+        pass
     if _exists(BACKUP):
         _rmtree(BACKUP)
     os.mkdir(BACKUP)
