@@ -71,6 +71,13 @@ WDT resets it → it comes back reachable with the culprit named from RTC memory
 autostart disabled, and a sleeping bystander guest *not* blamed.
 **Acceptance**: all four suites green against the board; the drill names the right guest.
 
+**Status: board is up.** `jorm-c510` runs on an ESP32-S3 N16R8 (MicroPython 1.28.0,
+SPIRAM_OCT — 8.3 MB free heap), reachable at `http://jorm-c510.local` (mDNS works;
+`network.hostname()` registers the responder). All four suites pass on silicon.
+`examples/beacon` drives the devkit's RGB LED on GPIO48 as the node's own status
+light — green breathing on `$sys/clock/tick`, red when any guest crashes. **The
+ungovernable-guest WDT drill is the one item left in zero.**
+
 ## Later (v1-shaped, out of zero)
 
 mDNS discovery + cluster view + bundle migration; BLE GATT mux; AP-mode provisioning

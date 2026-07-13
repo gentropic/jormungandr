@@ -1,0 +1,28 @@
+{
+  "spec": 0,
+  "id": "beacon",
+  "name": "Beacon",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": true,
+  "restart": "on-crash",
+  "caps": {
+    "rgb": [
+      {
+        "pin": 48,
+        "count": 1
+      }
+    ],
+    "bus": {
+      "pub": [
+        "beacon/#"
+      ],
+      "sub": [
+        "$sys/#",
+        "cmd/beacon/#"
+      ]
+    },
+    "ui": true
+  }
+}

@@ -91,13 +91,18 @@ class Bus:
         if len(enc) > MSG_MAX:
             raise BusError('message is %d bytes; the limit is %d' % (len(enc), MSG_MAX))
         if retain:
-            if msg is None:  # a retained None clears the slot (MQTT convention)
+            if msg is None:
+                # A retained None clears the slot (MQTT convention) — and is still
+                # DELIVERED to live subscribers, who otherwise never learn the
+                # thing is gone. Clearing silently means a subscriber's picture of
+                # the world is only ever additive: it would show a removed guest
+                # as still crashed, forever, and be right about nothing.
                 self.retained.pop(topic, None)
-                return
-            if (not topic.startswith('$') and topic not in self.retained
+            elif (not topic.startswith('$') and topic not in self.retained
                     and sum(1 for t in self.retained if not t.startswith('$')) >= RETAINED_MAX):
                 raise BusError('retained table full (%d topics)' % RETAINED_MAX)
-            self.retained[topic] = enc  # $-roots are supervisor-owned and exempt from the cap
+            else:
+                self.retained[topic] = enc  # $-roots are supervisor-owned, exempt from the cap
         self.pub_counts[owner] = self.pub_counts.get(owner, 0) + 1
         delivered = 0
         for sub in self.subs:

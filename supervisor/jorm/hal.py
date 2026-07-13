@@ -10,6 +10,7 @@ import os
 import time
 
 import machine
+import neopixel
 
 from jorm import bus as busmod
 from jorm import guestcfg
@@ -89,6 +90,15 @@ class Hal:
         if not self._sup.claims.spi_grant(self._guest.id, bus, cs):
             raise CapError('spi %d/cs %d not granted to guest "%s"' % (bus, cs, self._guest.id))
         return SpiHandle(self, bus, cs)
+
+    def rgb(self, n):
+        if not self._sup.claims.rgb_grant(self._guest.id, n):
+            raise CapError('rgb on pin %d not granted to guest "%s"' % (n, self._guest.id))
+        count = 1
+        for e in self._caps().get('rgb', []):
+            if e['pin'] == n:
+                count = e.get('count', 1)
+        return RgbHandle(n, count)
 
     def spawn(self, coro):
         task = asyncio.create_task(self._child(coro))
@@ -270,6 +280,31 @@ class PwmHandle:
         if not 0 <= d <= 1023:
             raise ValueError('duty is 0..1023')
         self._pwm.duty(d)
+
+
+class RgbHandle:
+    """Addressable RGB (WS2812 and kin). The supervisor owns the bit-banged
+    timing — a guest gets colours, not microseconds."""
+
+    def __init__(self, n, count):
+        self._np = neopixel.NeoPixel(machine.Pin(n), count)
+        self._count = count
+
+    def __len__(self):
+        return self._count
+
+    def set(self, i, rgb):
+        self._np[i] = tuple(rgb)
+
+    def fill(self, rgb):
+        self._np.fill(tuple(rgb))
+
+    def write(self):
+        self._np.write()
+
+    def off(self):
+        self._np.fill((0, 0, 0))
+        self._np.write()
 
 
 class AdcHandle:

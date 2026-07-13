@@ -67,6 +67,7 @@ Rules: `run(hal)` is the sole entry point; await at least every ~50 ms; return =
     "adc":     [ 4 ],
     "i2c":     [ {"bus": 0, "addrs": [60, 87]} ],
     "spi":     [ {"bus": 1, "cs": 10} ],
+    "rgb":     [ {"pin": 48, "count": 1} ],
     "net":     { "client": true },
     "ble":     "peripheral",
     "bus":     { "pub": ["blinky/#"], "sub": ["clock/tick", "cmd/blinky/#"] },
@@ -94,6 +95,7 @@ Grant time is start time. All-or-nothing. On stop/crash, all claims release.
 | `adc` | exclusive per channel | implies the pin claim. |
 | `i2c` | bus shared, address exclusive | supervisor owns the bus object; guests get address-scoped handles. Two guests on bus 0 is fine; two guests claiming addr 60 is not. Each `hal.i2c` call is **one atomic bus transaction**; separate calls may interleave with another guest's — that's what `mem_read`/`mem_write` exist for. |
 | `spi` | bus shared, CS pin exclusive | CS claim implies the pin claim. |
+| `rgb` | exclusive per pin | addressable RGB (WS2812 and kin); implies the pin claim. The supervisor owns the bit-banged timing — a guest gets colours, not microseconds. This is the one *device* in the hal, and it earns the exception: the status LED is soldered to every devkit worth the name, and a node that cannot show its own state on its own board is a worse instrument. |
 | `net` | shared | supervisor owns WiFi + IP stack (it needs them for the API). **Client-only in zero** — the supervisor owns the listener; guest servers are a later cap. Guests get async sockets/HTTP; HTTPS-as-client works on flagships (a TLS context costs ~30–40 KB) and is not offered on leaves. Per-guest byte counters for the UI. |
 | `ble` | **exclusive** | one BLE stack, one owner. `"peripheral"` or `"central"`. Second requester fails to start: `device busy: BLE passed through to guest "blinky-ble"`. Shared-GATT mux is a later iteration. |
 | `usb` | exclusive per interface | device mode only. Interfaces are planned at boot into one composite descriptor (§8); a guest owns its interface(s) exclusively. HID grants are flagged in the claims table — a keyboard-capable guest is a keystroke injector and deserves visibility. |
@@ -120,6 +122,7 @@ hal.pwm(n)                          → .freq(hz) .duty(0..1023)
 hal.adc(ch)                         → .read_u16()
 hal.i2c(bus)                        → .read(addr, n) .write(addr, buf) .mem_read/.mem_write   # addr checked against grant
 hal.spi(bus, cs)                    → .xfer(buf) …
+hal.rgb(pin)                        → .set(i, (r,g,b)) .fill((r,g,b)) .write() .off()
 
 hal.net.socket(...)                 → async socket (subset of asyncio streams)
 hal.net.get(url) / .post(url, …)    → tiny async HTTP client
@@ -355,3 +358,5 @@ Zero also fixes, by fiat rather than agony: MicroPython proper ≥ 1.24 for the 
 13. **HID + LAN-trust called out** (§6): the spiciest capability composition gets an explicit tailnet recommendation.
 14. **Dev board for zero: ESP32-S3**, WROOM-32 demoted to M1 fallback — M2's heap pressure, not §8, is the real reason.
 15. **The sim node is zero-era infrastructure**: the supervisor runs unmodified on MicroPython's unix port with stubbed `machine`/`network` (`sim/` — stubs shadow builtins via `MICROPYPATH`, never deployed). Development happens at desktop speed on the sim; the board is where milestones are *verified*, and `jorm` is the acceptance harness against both. CPython is not a substitute — the sim exists precisely to fail the way the board fails.
+16. **`rgb` is a capability** (§3/§4): addressable RGB on a claimed pin. The supervisor owns the timing; the guest owns the colour. `examples/beacon` is the node's own status light *as a guest* — Switchboard's go/caution/fault rendered in photons, driven by `$sys` — which is the whole thesis of the project in one LED: the supervisor's telemetry is a bus anyone can subscribe to, so a status light is an app, not firmware.
+17. **A retained clear is delivered, not just applied** (§5): publishing `None` retained empties the slot *and* is sent to live subscribers. Clearing silently meant a subscriber's picture of the world was only ever additive — the beacon showed a removed guest as still crashed, forever. Found on hardware, by a light that would not turn back green.

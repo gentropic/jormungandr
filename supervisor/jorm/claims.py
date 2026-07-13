@@ -27,6 +27,7 @@ class Claims:
         reqs += [(n, 'pwm', None, None) for n in caps.get('pwm', [])]
         reqs += [(n, 'adc', None, None) for n in caps.get('adc', [])]
         reqs += [(e['cs'], 'cs', None, e['bus']) for e in caps.get('spi', [])]
+        reqs += [(e['pin'], 'rgb', None, None) for e in caps.get('rgb', [])]
         return reqs
 
     def grant(self, guest_id, caps):
@@ -97,6 +98,9 @@ class Claims:
 
     def adc_grant(self, guest_id, n):
         return self._pin_mode(guest_id, n, ('adc',))
+
+    def rgb_grant(self, guest_id, n):
+        return self._pin_mode(guest_id, n, ('rgb',))
 
     def spi_grant(self, guest_id, bus, cs):
         entry = self._pin_mode(guest_id, cs, ('cs',))

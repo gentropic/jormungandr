@@ -5,9 +5,9 @@ from jorm.bus import valid_filter
 _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 
 KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'ble', 'bus', 'ui',
-              'storage', 'mem_kb', 'usb')
+              'storage', 'mem_kb', 'usb', 'rgb')
 SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'bus', 'ui',
-                  'storage', 'mem_kb')  # M4 brings usb; ble is post-zero
+                  'storage', 'mem_kb', 'rgb')  # M4 brings usb; ble is post-zero
 
 
 class ManifestError(Exception):
@@ -62,6 +62,10 @@ def validate(m):
             raise ManifestError('pin mode must be out | in | in-shared')
         if 'pull' in p and p['pull'] not in ('up', 'down'):
             raise ManifestError('pull must be up | down')
+    for e in caps.get('rgb', []):
+        if not (isinstance(e, dict) and isinstance(e.get('pin'), int)
+                and isinstance(e.get('count', 1), int) and e.get('count', 1) > 0):
+            raise ManifestError('rgb entries must be {"pin": n, "count": k}')
     for key in ('pwm', 'adc'):
         if key in caps and not (isinstance(caps[key], list)
                                 and all(isinstance(n, int) for n in caps[key])):
