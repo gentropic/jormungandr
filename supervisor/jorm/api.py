@@ -78,13 +78,28 @@ def create_app(node, sup):
     @app.post('/api/node/reboot')
     async def api_node_reboot(req):
         node.log.append('sys', 'reboot requested over API')
+        _reboot_soon()
+        return {'rebooting': True}
 
+    @app.post('/api/node/maintenance')
+    async def api_node_maintenance(req):
+        # The hardware WDT cannot be disarmed once armed, so a running node
+        # cannot be held in the REPL long enough to deploy to it — the watchdog
+        # reboots it out from under you, correctly. This is the way in: the node
+        # reboots into a state where it starts nothing and arms nothing, and
+        # waits at the REPL for a deploy over USB. Normal boot resumes on the
+        # next reset; the flag is consumed, never sticky.
+        write_atomic('.maintenance', 'requested over the API')
+        node.log.append('sys', 'maintenance requested — rebooting to the REPL')
+        _reboot_soon()
+        return {'rebooting': True, 'into': 'maintenance'}
+
+    def _reboot_soon():
         async def later():
             await asyncio.sleep(0.1)
             machine.reset()
 
         asyncio.create_task(later())
-        return {'rebooting': True}
 
     # -- guests ----------------------------------------------------------------
 

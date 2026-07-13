@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export JORM_URL="${JORM_URL:-http://localhost:8000}"
-export JORM_TOKEN="dev-token"
+export JORM_TOKEN="${JORM_TOKEN:-dev-token}"
 JORM="python3 $ROOT/cli/jorm.py"
 SIMLOG="$(mktemp)"
 TMP="$(mktemp -d)"
@@ -14,10 +14,21 @@ TMP="$(mktemp -d)"
 fail() { echo "FAIL: $1"; echo "--- sim output ---"; tail -20 "$SIMLOG"; exit 1; }
 pass() { echo "  ok: $1"; }
 
-rm -rf "$ROOT/sim/fs/guests"   # fresh flash
-"$ROOT/sim/run.sh" >"$SIMLOG" 2>&1 &
-SIM=$!
-trap 'kill $SIM 2>/dev/null || true; rm -rf "$TMP"' EXIT
+# NODE=<url> runs against a real board; otherwise a fresh sim node is spawned.
+if [ -n "${NODE:-}" ]; then
+    export JORM_URL="$NODE"
+    echo "== target: $JORM_URL (real node)"
+    for g in $(python3 "$ROOT/cli/jorm.py" guests | awk 'NR>1 {print $1}'); do
+        python3 "$ROOT/cli/jorm.py" stop "$g" >/dev/null 2>&1 || true
+        python3 "$ROOT/cli/jorm.py" rm "$g" >/dev/null 2>&1 || true
+    done
+    trap 'rm -rf "$TMP"' EXIT
+else
+    rm -rf "$ROOT/sim/fs/guests"   # fresh flash
+    "$ROOT/sim/run.sh" >"$SIMLOG" 2>&1 &
+    SIM=$!
+    trap 'kill $SIM 2>/dev/null || true; rm -rf "$TMP"' EXIT
+fi
 
 for i in $(seq 1 50); do
     curl -sf -H "Authorization: Bearer $JORM_TOKEN" "$JORM_URL/api/node" >/dev/null && break
@@ -33,8 +44,16 @@ echo "== create + start blinky"
 $JORM create "$ROOT/examples/blinky" | grep -q created || fail "create blinky"
 $JORM start blinky | grep -q running || fail "start blinky"
 sleep 1.2
-grep -q "pin 2 -> 1" "$SIMLOG" || fail "LED not blinking"
-pass "LED blinks (sim pin toggles)"
+if [ -n "${NODE:-}" ]; then
+    # On silicon we can't see the LED from here. Verify what software can:
+    # the guest is running, it owns the pin, and it has not crashed.
+    $JORM guests | grep -q "blinky.*running" || fail "blinky not running"
+    $JORM guest blinky | grep -qi "traceback" && fail "blinky crashed"
+    pass "blinky runs and holds pin 2 (the photons are yours to confirm)"
+else
+    grep -q "pin 2 -> 1" "$SIMLOG" || fail "LED not blinking"
+    pass "LED blinks (sim pin toggles)"
+fi
 
 echo "== claims"
 $JORM claims | grep -q "pin 2.*blinky" || fail "claims table"

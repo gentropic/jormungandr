@@ -359,13 +359,26 @@ function currentScope() {
   return filters;
 }
 
-// staleness: the pulse is data or it is nothing
+// Staleness: the pulse is data or it is nothing.
+//
+// A node that dies does NOT close its socket. Real silicon just stops — no FIN,
+// no close frame — so the browser holds a zombie socket reporting OPEN for as
+// long as TCP takes to give up (minutes). An open-but-silent socket is not a
+// link that is up: we drive liveness from the ticks, and when they stop we
+// close the socket ourselves, which turns the light red and starts the
+// reconnect backoff that would otherwise never run. (The sim could never show
+// this: killing a process closes its socket politely.)
 setInterval(() => {
   if (!S.token || !S.lastMsg) return;
   const age = Date.now() - S.lastMsg;
   const stale = age > 3500;
   $('#app').classList.toggle('stale', stale);
-  if (stale) $('#stalesecs').textContent = 'last data ' + Math.round(age / 1000) + ' s ago';
+  if (!stale) return;
+  $('#stalesecs').textContent = 'last data ' + Math.round(age / 1000) + ' s ago';
+  $('#link').className = 'down';
+  if (S.ws && S.ws.readyState === 1) {
+    try { S.ws.close(); } catch (e) {}   // onclose schedules the reconnect
+  }
 }, 1000);
 
 function route(topic, msg) {

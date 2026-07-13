@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export JORM_URL="${JORM_URL:-http://localhost:8000}"
-export JORM_TOKEN="dev-token"
+export JORM_TOKEN="${JORM_TOKEN:-dev-token}"
 JORM="python3 $ROOT/cli/jorm.py"
 CURL="curl -s -H \"Authorization: Bearer $JORM_TOKEN\""
 SIMLOG="$(mktemp)"
@@ -16,10 +16,21 @@ fail() { echo "FAIL: $1"; echo "--- sim output ---"; tail -20 "$SIMLOG"; exit 1;
 pass() { echo "  ok: $1"; }
 api() { curl -s -H "Authorization: Bearer $JORM_TOKEN" "$JORM_URL$1"; }
 
-rm -rf "$ROOT/sim/fs/guests"   # fresh flash
-"$ROOT/sim/run.sh" >"$SIMLOG" 2>&1 &
-SIM=$!
-trap 'kill $SIM 2>/dev/null || true; rm -rf "$TMP"' EXIT
+# NODE=<url> runs against a real board; otherwise a fresh sim node is spawned.
+if [ -n "${NODE:-}" ]; then
+    export JORM_URL="$NODE"
+    echo "== target: $JORM_URL (real node)"
+    for g in $(python3 "$ROOT/cli/jorm.py" guests | awk 'NR>1 {print $1}'); do
+        python3 "$ROOT/cli/jorm.py" stop "$g" >/dev/null 2>&1 || true
+        python3 "$ROOT/cli/jorm.py" rm "$g" >/dev/null 2>&1 || true
+    done
+    trap 'rm -rf "$TMP"' EXIT
+else
+    rm -rf "$ROOT/sim/fs/guests"   # fresh flash
+    "$ROOT/sim/run.sh" >"$SIMLOG" 2>&1 &
+    SIM=$!
+    trap 'kill $SIM 2>/dev/null || true; rm -rf "$TMP"' EXIT
+fi
 
 for i in $(seq 1 50); do
     curl -sf -H "Authorization: Bearer $JORM_TOKEN" "$JORM_URL/api/node" >/dev/null && break

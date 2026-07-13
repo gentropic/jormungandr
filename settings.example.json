@@ -1,0 +1,7 @@
+{
+  "wifi": { "ssid": "your-ssid", "psk": "your-password" },
+  "token": "change-me-a-long-random-string",
+  "port": 80,
+  "reserved_pins": [],
+  "wdt": true
+}

@@ -24,3 +24,6 @@ AGENTS.md
 # sim node "flash" — a scratch filesystem, never committed
 sim/fs/*
 !sim/fs/.gitkeep
+
+# board tooling venv (esptool + mpremote + pyserial): see tools/README.md
+.venv/

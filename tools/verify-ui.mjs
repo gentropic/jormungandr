@@ -14,7 +14,8 @@ const ok = (name, cond) => {
 };
 
 // reset: demo guests installed + running, whatever state the node was left in
-const HDRS = { Authorization: 'Bearer dev-token', 'Content-Type': 'application/json' };
+const TOKEN = process.env.JORM_TOKEN || 'dev-token';
+const HDRS = { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
 const ex = p => readFileSync(new URL('../examples/' + p, import.meta.url), 'utf8');
 // hermetic: wipe and reinstall, so config state from a prior run can't make
 // "set unit_f=true" a no-op that never goes pending
@@ -47,7 +48,7 @@ await page.goto(BASE);
 // login
 await page.waitForSelector('#in-token');
 await page.fill('#in-url', BASE);
-await page.fill('#in-token', 'dev-token');
+await page.fill('#in-token', TOKEN);
 await page.click('#connectbtn');
 
 // node summary renders live

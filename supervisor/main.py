@@ -2,6 +2,7 @@
 # Runs unmodified on a real node and on the sim (sim/run.sh swaps machine/network).
 import asyncio
 import json
+import os
 import sys
 import time
 
@@ -62,10 +63,45 @@ async def amain(node, sup, app):
     await app.start_server(host='0.0.0.0', port=node.port)
 
 
-node = Node(load_settings())
-wifi_up(node)
-sup = Supervisor(node)
-sup.blame_check()
-sup.scan()
-sup.install_import_guard()
-asyncio.run(amain(node, sup, create_app(node, sup)))
+def held():
+    """Two ways to stop the node before it arms anything (spec §11).
+
+    The hardware WDT cannot be disarmed once armed — not even by a soft reset —
+    so a provisioned node correctly reboots itself the moment the supervisor
+    stops being fed, and that is fatal to a deploy: Ctrl-C into the REPL and the
+    watchdog throws you out of it seconds later. So the node can be stopped
+    *before* the WDT exists, either by asking it over HTTP (POST
+    /api/node/maintenance, which drops the flag consumed here) or by catching
+    the two-second boot window with a Ctrl-C. Both cost nothing in the field and
+    buy the ability to fix a node that is otherwise reachable only by re-flashing.
+
+    Note: this must NOT raise SystemExit — MicroPython treats a forced exit from
+    main.py as a soft-reset request and boots you straight back into the thing
+    you were escaping.
+    """
+    try:
+        os.remove('.maintenance')
+    except OSError:
+        pass
+    else:
+        print('[sys] maintenance boot — nothing started, WDT not armed.')
+        return True
+    try:
+        print('[sys] boot in 2 s — Ctrl-C for the REPL')
+        time.sleep(2)
+    except KeyboardInterrupt:
+        print('[sys] caught at the escape window — supervisor not started, WDT not armed')
+        return True
+    return False
+
+
+if held():
+    print('[sys] the REPL is yours.')
+else:
+    node = Node(load_settings())
+    wifi_up(node)
+    sup = Supervisor(node)
+    sup.blame_check()
+    sup.scan()
+    sup.install_import_guard()
+    asyncio.run(amain(node, sup, create_app(node, sup)))
