@@ -34,3 +34,4 @@ supervisor/ui.html.gz
 supervisor/web/*.gz
 sim/fs2/
 sim/fs-cl*/
+sim/fs-br*/

@@ -619,8 +619,13 @@ def create_app(node, sup):
 
         async def sender():
             while True:
-                topic, enc = await sub.get()
-                await ws.send('{"topic": %s, "msg": %s}' % (json.dumps(topic), enc))
+                topic, enc, origin = await sub.get()
+                # node names where a message came from — null for locally published,
+                # the peer's hostname for a bridged import. A bridge client reads it
+                # to know the message is not its own echo; the UI reads it to show
+                # which board a message crossed from.
+                await ws.send('{"topic": %s, "msg": %s, "node": %s}'
+                              % (json.dumps(topic), enc, json.dumps(origin)))
 
         async def drops():
             # A monitor that quietly drops is a monitor that lies about what the
@@ -646,6 +651,9 @@ def create_app(node, sup):
                 if op == 'sub':
                     filters = [f for f in frame.get('filters', []) if valid_filter(f)]
                     sub.filters = filters
+                    # A bridge asks for split-horizon delivery: this node's own
+                    # traffic only, never what it imported from a third node.
+                    sub.bridge = bool(frame.get('bridge'))
                     sup.bus.deliver_retained(sub, filters)
                 elif op == 'pub':
                     try:

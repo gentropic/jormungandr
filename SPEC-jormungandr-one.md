@@ -104,10 +104,18 @@ and breaks ties on RSSI; migration will reuse the same instinct.
 
 Named here so the first slice is built toward them, not around them:
 
-- **Bus bridging.** A node opens a WebSocket to a peer's `/api/bus`, subscribes to a
-  declared slice, and republishes locally with a `node` field. The bus is already
-  MQTT-shaped, so this is the cheapest real coordination: a guest on one board reacts
-  to another board's temperature. Build first.
+- **Bus bridging — DONE (chapter 2).** A node opens a WebSocket to a peer's
+  `/api/bus` (the node grew an async WS *client*, `jorm/wsclient.py`), subscribes to
+  the slice declared in `settings["bridge"]`, and republishes each message on its own
+  bus stamped with the peer as `origin`. A guest here reacts to a guest there through
+  the bus alone, neither knowing the other is on a different board — verified: pinger
+  on one node, echoer on another, coordinating only across the bridge. Two disciplines
+  keep it honest: **split horizon** (a node exports only its own traffic to a peer's
+  bridge, never its imports — so `B→A→C→A` can't loop; enforced by a `bridge` flag on
+  the subscription and an `origin` on every message) and **`$`-roots stay home** (a
+  node's `$sys` telemetry is private; bridging it would collide every board's heap
+  onto one topic). Retained-value sync across the bridge and multi-hop relay are left
+  for later; today's bridge is direct and live. `tools/accept-bridge.sh`: 5 checks.
 - **Migration.** `GET /api/guests/{id}/bundle` → `POST` to a peer → **precheck its
   claims table** → flip autostart → stop here. It must *refuse honestly*: "that node
   has no free pin 48" is the answer, not a crash after the move. Live-migrating a
@@ -121,7 +129,12 @@ Named here so the first slice is built toward them, not around them:
 
 ## Status
 
-**Chapter 1 (this spec): done.** Beacon + peer table + seeds + `/api/cluster` + CORS
-+ one tree + hop, verified with two sim nodes discovering each other, showing each
-other's guests in one tree, and hopping between them with a ticket handoff. A board
-runs it as a cluster of one, unchanged. Chapters 2–4 are not started.
+**Chapter 1: done.** Beacon + peer table + seeds + `/api/cluster` + CORS + one tree +
+hop, verified with two sim nodes discovering each other, showing each other's guests
+in one tree, and hopping between them with a ticket handoff. A board runs it as a
+cluster of one, unchanged.
+
+**Chapter 2 (bus bridging): done.** A node pulls a declared slice of every peer's bus
+into its own over an async WS client, split-horizon and `$`-private, so guests on
+different boards coordinate through one bus. The UI's monitor shows each bridged
+message's origin board (`↯jorm-x`). Chapters 3–4 (migration, ESP-NOW) are not started.

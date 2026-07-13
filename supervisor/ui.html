@@ -189,6 +189,7 @@ table.cl { width:100%; border-collapse:collapse; font:400 .78rem var(--au-font-m
 .term .sys { color:var(--au-info); } .term .err { color:var(--au-error); }
 .term .topic { color:var(--au-info); display:inline-block; min-width:15em; margin-right:.6em; }
 .term .row.uiline, .term .row.uiline .topic { color:var(--au-action); }
+.term .from { color:var(--au-success); margin-right:.6em; }
 
 svg.spark { display:block; }
 .sp-line { fill:none; stroke:var(--au-fg-muted); stroke-width:1.2; }
@@ -700,7 +701,7 @@ function connect() {
   ws.onmessage = ev => {
     S.lastMsg = Date.now();
     let frame; try { frame = JSON.parse(ev.data); } catch (e) { return; }
-    if (frame.topic !== undefined) route(frame.topic, frame.msg);
+    if (frame.topic !== undefined) route(frame.topic, frame.msg, frame.node);
     else if (frame.drops !== undefined) {
       S.drops = frame.drops;
       const el = $('#busdrops');
@@ -770,7 +771,7 @@ setInterval(() => {
   }
 }, 1000);
 
-function route(topic, msg) {
+function route(topic, msg, node) {
   if (topic === '$sys/clock/tick') {
     const tick = $('#tick');
     tick.classList.add('lit');
@@ -826,8 +827,11 @@ function route(topic, msg) {
   const bus = $('#busterm');
   if (bus && !S.busPaused) {
     const ui = msg && typeof msg === 'object' && msg.origin === 'ui';
+    // node is set when a message was bridged in from a peer (one §4) — show which
+    // board it crossed from, so the one bus visibly spans the cluster.
+    const from = node ? `<span class="from">↯${esc(node)}</span>` : '';
     termLine(bus, `<span class="t">${new Date().toTimeString().slice(0, 8)}</span>` +
-      `<span class="topic">${ui ? '▸ ' : ''}${esc(topic)}</span>${esc(JSON.stringify(msg))}`,
+      `<span class="topic">${ui ? '▸ ' : ''}${esc(topic)}</span>${from}${esc(JSON.stringify(msg))}`,
       ui ? 'uiline' : '');
   }
 }

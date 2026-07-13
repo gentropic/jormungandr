@@ -237,7 +237,10 @@ class SubIterator:
         return self
 
     async def __anext__(self):
-        topic, enc = await self._hal._yield(self._sub.get())
+        # The bus payload now carries an origin node too; a guest still sees just
+        # (topic, msg) — a guest subscribing to a bridged topic neither knows nor
+        # cares which board it crossed from, which is the point of one tree.
+        topic, enc, _origin = await self._hal._yield(self._sub.get())
         return topic, json.loads(enc)
 
 

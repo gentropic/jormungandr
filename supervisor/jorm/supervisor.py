@@ -13,6 +13,7 @@ import machine
 
 from jorm import clock
 from jorm import usb
+from jorm.bridge import BridgeManager
 from jorm.cluster import Discovery
 from jorm.bus import Bus, BusError
 from jorm.claims import Claims
@@ -52,6 +53,8 @@ class Supervisor:
         # Cluster discovery: this node's view of its peers (one §1). Always present,
         # even for a cluster of one — a cluster of one is how a cluster of eight begins.
         self.cluster = Discovery(node)
+        # Bus bridging (one §4): pull a declared slice of each peer's bus into ours.
+        self.bridge = BridgeManager(self)
 
     def i2c(self, bus):
         """The supervisor owns the bus object; guests get address-scoped handles."""

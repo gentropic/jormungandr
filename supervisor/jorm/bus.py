@@ -65,23 +65,31 @@ def valid_filter(filt):
 
 
 class Subscription(Tap):
-    def __init__(self, filters, qlen, owner):
+    def __init__(self, filters, qlen, owner, bridge=False):
         super().__init__(qlen)
         self.filters = filters
         self.owner = owner
+        # A bridge subscriber pulls this node's bus into another node's. It must be
+        # told ONLY what originated HERE, never what this node itself imported from a
+        # third node — otherwise B→A→C→A→… loops the cluster forever. This is split
+        # horizon: a node exports its own traffic, never its imports (one §4).
+        self.bridge = bridge
 
     def info(self):
         return {'filters': self.filters, 'drops': self.drops,
-                'depth': len(self.items), 'qlen': self.qlen}
+                'depth': len(self.items), 'qlen': self.qlen, 'bridge': self.bridge}
 
 
 class Bus:
     def __init__(self):
         self.subs = []
-        self.retained = {}    # topic -> encoded JSON
+        self.retained = {}    # topic -> (encoded JSON, origin node or None)
         self.pub_counts = {}  # owner -> messages published
 
-    def publish(self, topic, msg, retain=False, owner='sup'):
+    def publish(self, topic, msg, retain=False, owner='sup', origin=None):
+        # origin: the node a message came from, or None for locally published. A
+        # bridge stamps imported messages with the peer's name so consumers (and the
+        # split-horizon check below) can tell local truth from imported truth.
         if not valid_topic(topic):
             raise BusError('invalid topic %r' % topic)
         try:
@@ -102,28 +110,33 @@ class Bus:
                     and sum(1 for t in self.retained if not t.startswith('$')) >= RETAINED_MAX):
                 raise BusError('retained table full (%d topics)' % RETAINED_MAX)
             else:
-                self.retained[topic] = enc  # $-roots are supervisor-owned, exempt from the cap
+                self.retained[topic] = (enc, origin)  # $-roots exempt from the cap
         self.pub_counts[owner] = self.pub_counts.get(owner, 0) + 1
         delivered = 0
         for sub in self.subs:
+            if sub.bridge and origin is not None:
+                continue      # split horizon: never re-export an import
             for f in sub.filters:
                 if match(f, topic):
-                    sub.push((topic, enc))
+                    sub.push((topic, enc, origin))
                     delivered += 1
                     break
         return delivered
 
-    def subscribe(self, filters, qlen=16, owner='sup'):
-        sub = Subscription(filters, qlen, owner)
+    def subscribe(self, filters, qlen=16, owner='sup', bridge=False):
+        sub = Subscription(filters, qlen, owner, bridge)
         self.subs.append(sub)
         self.deliver_retained(sub, filters)
         return sub
 
     def deliver_retained(self, sub, filters):
         for topic in sorted(self.retained):
+            enc, origin = self.retained[topic]
+            if sub.bridge and origin is not None:
+                continue      # split horizon applies to the retained backlog too
             for f in filters:
                 if match(f, topic):
-                    sub.push((topic, self.retained[topic]))
+                    sub.push((topic, enc, origin))
                     break
 
     def unsubscribe(self, sub):
@@ -131,4 +144,4 @@ class Bus:
             self.subs.remove(sub)
 
     def retained_table(self):
-        return {t: json.loads(enc) for t, enc in self.retained.items()}
+        return {t: json.loads(enc) for t, (enc, _origin) in self.retained.items()}
