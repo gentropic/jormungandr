@@ -37,3 +37,4 @@ sim/fs-cl*/
 sim/fs-br*/
 sim/fs-flag/
 sim/fs-leaf/
+sim/fs-host/
