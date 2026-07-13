@@ -92,6 +92,32 @@ cross-origin reads and the hop-ticket mint all use it. Per-node tokens were the
 alternative (a compromised board is not a skeleton key); shared won on the ergonomics
 of a LAN of six-dollar boards, and the token never travels in a URL regardless.
 
+## 2b. Heterogeneous nodes — a hardware finding
+
+A cluster is meant to mix a flagship S3 with cheaper silicon. We flashed MicroPython
+onto an ESP32-C3 supermini (single core, ~170 KB heap) to make it a real node, and
+learned exactly where the line is:
+
+- The C3 **boots the full supervisor** — WiFi up, API listening, NTP synced. Getting
+  there needed two fixes that help every node: the USB device stack (~1500 lines)
+  loads lazily, only on a node with a usb guest, and the heavy supervisor imports
+  happen **after** `wifi_up`, so the WiFi driver claims its RX buffers while internal
+  RAM is most free (otherwise: "WiFi Out of Memory"). A down-cycle of the radio on
+  boot clears the stale state a reset leaves, which the flagship tolerated and the
+  small node did not.
+- But the full supervisor **starves the C3's network stack**. lwIP cannot spare a
+  buffer for the UDP beacon broadcast (`ENOMEM`), and the same exhaustion stops the
+  HTTP server accepting connections — the event loop runs, the node is network-dead.
+  And the hardware WDT resets it during the ~1 s single-core GC pauses, because the
+  heartbeat can't be fed in time.
+
+The conclusion is the one §2b of the design predicted, now measured: **the flagship
+supervisor is over a C3's weight class.** A C3 joins not by running the whole thing
+but as a **limb** — a stripped build (beacon + bus + a minimal API and a declarative
+I/O map, no UI serving, no USB, no full guest hosting) that leaves lwIP its buffers —
+or, later, the sol/Lua firmware. The full-node path is for flagships. This is a
+boundary to design around, not a bug to cram past.
+
 ## 3. Placement — the score, when it is time
 
 A node reports `rssi` (dBm, or `null` for a node with no radio — never `0`, which

@@ -18,10 +18,15 @@ by, and honoring it is the whole reason the fiction holds.
 
 Inert has to mean inert. A guest stopped mid-keystroke must not leave a key held
 down on the host — the interface goes quiet, it does not jam. See release().
+
+The heavy interface classes (usbcore/usbhid/usbkbd/usbmouse, ~1500 lines) are NOT
+imported at module load — they are pulled in inside _build() and apply(), which run
+only on a node that actually has a usb guest. A node with none never loads them,
+which is the difference between the WiFi driver getting its RX buffers and not on a
+C3 with ~170 KB of heap. It also respects the no-lazy-import-in-a-guest's-hot-path
+rule: _build runs at install and at boot, never inside a guest's await.
 """
-from jorm.usbhid import HIDInterface
-from jorm.usbkbd import KeyboardInterface, KeyCode      # noqa: F401  (re-exported to hal)
-from jorm.usbmouse import MouseInterface
+
 
 # The S3's OTG controller has a small, finite pool of endpoints. The exact usable
 # count depends on what the built-in driver keeps for itself, so this is the
@@ -85,10 +90,15 @@ def _build(guest_id, cap):
                            'this supervisor grants usb.hid only' % key)
 
     hid = cap.get('hid')
+    # Lazy: only a node with a usb guest loads the ~1500-line device stack. This is
+    # reached at install and at boot, never in a guest's await, so it does not
+    # reintroduce the lazy-import-blames-the-guest bug (spec §1).
     if hid == 'keyboard':
+        from jorm.usbkbd import KeyboardInterface
         grants.append(Grant(guest_id, 'hid', 'keyboard',
                             KeyboardInterface(interface_str='jorm: %s' % guest_id)))
     elif hid == 'mouse':
+        from jorm.usbmouse import MouseInterface
         grants.append(Grant(guest_id, 'hid', 'mouse',
                             MouseInterface(interface_str='jorm: %s' % guest_id)))
     elif isinstance(hid, dict) and 'report_desc' in hid:

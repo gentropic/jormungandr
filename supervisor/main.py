@@ -9,8 +9,11 @@ import time
 import network
 
 from jorm.node import Node
-from jorm.api import create_app
-from jorm.supervisor import Supervisor
+# create_app and Supervisor are imported AFTER wifi_up (see the boot block), not
+# here: loading the whole supervisor first leaves too little contiguous internal RAM
+# for the WiFi driver's RX buffers on a small node (a C3 fails with "WiFi Out of
+# Memory" otherwise). This is a one-time boot ordering, before the event loop — not
+# a lazy import in a running task, which is the pattern §1 warns against.
 
 
 def fail(msg):
@@ -32,7 +35,22 @@ def load_settings():
 
 
 def wifi_up(node):
+    # The WiFi driver needs a contiguous block for its RX buffers, and on a small
+    # node (a C3 with ~170 KB heap) importing the supervisor first can leave too
+    # little — "WiFi Out of Memory" at init. Collect before asking for the radio, so
+    # the driver gets the heap the bytecode loader was sitting on.
+    import gc
+    gc.collect()
     wlan = network.WLAN(network.STA_IF)
+    # Clear any stale driver state a reset leaves behind. Without the down-cycle a
+    # C3 fails the first connect after a reboot ("Wifi Internal State Error", or a
+    # 15 s timeout) and connects only on a second try; the flagship tolerated the
+    # dirty state, the small node does not.
+    try:
+        wlan.active(False)
+        time.sleep_ms(100)
+    except OSError:
+        pass
     wlan.active(True)
     mac = wlan.config('mac')
     node.mac4 = '%02x%02x' % (mac[-2], mac[-1])
@@ -132,6 +150,9 @@ if held():
 else:
     node = Node(load_settings())
     wifi_up(node)
+    # Radio has its buffers; now it is safe to load the rest.
+    from jorm.api import create_app
+    from jorm.supervisor import Supervisor
     sup = Supervisor(node)
     sup.blame_check()
     sup.scan()
