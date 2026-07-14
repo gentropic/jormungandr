@@ -23,4 +23,6 @@ if not _jorm:
         _jorm = "/mnt/c/Users/endar/Documents/GitHub/jormungandr/supervisor"
 package("jorm", base_path=_jorm)
 package("microdot", base_path=os.path.join(_jorm, "lib"))
-package("umqtt", base_path=os.path.join(_jorm, "lib"))
+# NB: do NOT freeze umqtt here — the ESP32 port's default manifest (included above) already
+# freezes umqtt.simple/robust, and a second copy is a redefinition error. The vendored
+# supervisor/lib/umqtt is only for the unix sim, which has no frozen umqtt.
