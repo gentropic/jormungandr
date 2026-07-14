@@ -32,6 +32,8 @@ async def wifi_watch(node):
             pass                       # a radio mid-fault reads as down; reconnect
         node.log.append('sys', 'wifi: link down — re-associating')
         try:
+            import gc
+            gc.collect()                # give the driver a compacted heap to grab buffers from
             wlan.active(False)
             await asyncio.sleep_ms(200)
             wlan.active(True)

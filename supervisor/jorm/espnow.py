@@ -153,8 +153,14 @@ class EspNowLink:
         after we heard it, so the loop counter is an unreliable witness (this stranded a
         leaf on the wrong channel). A legacy HELLO with no channel byte falls back to the
         loop's channel."""
+        import gc
         want = cluster.encode()
         for ch in (channels or range(1, 14)):
+            # Re-tuning the channel makes the WiFi driver reallocate RX buffers; with a
+            # full leaf-host and a busy guest loaded, the heap can be too fragmented for
+            # that and config() raises "WiFi Out of Memory" — silently skipping every
+            # channel so the scan finds nothing. A collect first hands the driver room.
+            gc.collect()
             try:
                 wlan.config(channel=ch)
             except OSError:

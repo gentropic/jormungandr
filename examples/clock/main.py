@@ -53,20 +53,19 @@ async def run(hal):
                 if row[c] == '#':
                     panel.pixel(x + c, r, 1)
 
-    def draw_clock(hh, mm, ss, frac10, blink):
+    def draw_clock(hh, mm, ss, show_colon):
         panel.fill(0)
         x = 1
         for ch in '%02d:%02d:%02d' % (hh, mm, ss):
             if ch == ':':
-                if st['synced'] or blink:      # colons blink while the clock is unset
+                if show_colon:                 # colon blinks while the clock is unset
                     glyph(':', x)
                 x += 1
             else:
                 glyph(ch, x)
                 x += 5                         # 4-wide digit + 1 px gap
-        for seg in range(frac10):              # decisecond bar, one block per tenth
-            panel.pixel(seg * 3 + 1, 7, 1)
-            panel.pixel(seg * 3 + 2, 7, 1)
+        for px in range((ss * panel.width) // 60):   # bottom row sweeps once a minute
+            panel.pixel(px, 7, 1)
 
     def draw_text(s, x):
         panel.fill(0)
@@ -82,6 +81,17 @@ async def run(hal):
         st['bright'] = max(0, min(15, int(v)))
         panel.brightness(st['bright'])
         state()
+
+    # Side-tasks must never take the clock down with them: a subscribe or a malformed
+    # message that raises should cost this listener a beat, not blank the panel. So each
+    # loops forever, logging and re-subscribing on error, and the render loop runs on.
+    async def _resilient(name, body):
+        while True:
+            try:
+                await body()
+            except Exception as e:
+                hal.log(name, 'error, re-subscribing:', e)
+                await hal.sleep_ms(1000)
 
     async def on_cmd():
         async for topic, msg in hal.bus.subscribe('cmd/clock/#'):
@@ -113,33 +123,31 @@ async def run(hal):
             elif key == 'tz':
                 st['tz'] = int(value)
 
-    hal.spawn(on_cmd())
-    hal.spawn(on_sys())
-    hal.spawn(on_cfg())
+    hal.spawn(_resilient('on_cmd', on_cmd))
+    hal.spawn(_resilient('on_sys', on_sys))
+    hal.spawn(_resilient('on_cfg', on_cfg))
     set_bright(st['bright'])
     hal.log('clock guest up on an 8x32 panel')
 
-    last_ss = -1
-    second_start = hal.ticks_ms()
+    # A wall clock needs no more than 2 fps, and idle frames that re-render the same
+    # minute only churn the heap — which on a small node starves the radio. So the clock
+    # ticks at 2 fps and only speeds up while a message is actually scrolling by.
+    CLOCK_MS = 500
+    SCROLL_MS = 60
     cur_msg = None
     scroll_x = panel.width
     phase = 'clock'
     phase_at = hal.ticks_ms()
     last_bright = None
+    blink = True
     tick = 0
     try:
         while True:
             now = hal.ticks_ms()
             t = int(hal.time()) + st['tz'] * 3600
             ss = t % 60
-            if ss != last_ss:
-                last_ss = ss
-                second_start = now
-            frac_ms = now - second_start
-            if frac_ms < 0 or frac_ms > 1200:  # ticks wrap or clock jump — reset the tenth
-                frac_ms = 0
-                second_start = now
             hh, mm = (t // 3600) % 24, (t // 60) % 60
+            scrolling = False
 
             want = st['night'] if (hh >= 22 or hh < 7) else st['bright']
             if want != last_bright:
@@ -152,6 +160,7 @@ async def run(hal):
                     cur_msg, scroll_x = notif['text'], panel.width
                 w = draw_text(notif['text'], scroll_x)
                 if w > panel.width:
+                    scrolling = True
                     scroll_x -= 1
                     if scroll_x < -w:
                         scroll_x = panel.width
@@ -163,22 +172,25 @@ async def run(hal):
                     phase, phase_at, cur_msg, scroll_x = 'banner', now, banner, panel.width
                 if phase == 'banner':
                     w = draw_text(banner, scroll_x)
+                    scrolling = True
                     scroll_x -= 1
                     if scroll_x < -w:
                         phase, phase_at = 'clock', now
                 else:
-                    draw_clock(hh, mm, ss, min(frac_ms // 100, 9), frac_ms < 500)
+                    blink = not blink
+                    draw_clock(hh, mm, ss, st['synced'] or blink)
             else:
                 if st['showing'] != 'clock':
                     st['showing'] = 'clock'
                     state()
                 cur_msg, phase = None, 'clock'
-                draw_clock(hh, mm, ss, min(frac_ms // 100, 9), frac_ms < 500)
+                blink = not blink
+                draw_clock(hh, mm, ss, st['synced'] or blink)
 
             panel.show()
             tick += 1
-            if tick % 25 == 0:                 # ~once a second, refresh the readout
+            if tick % 10 == 0:                 # refresh the web readout every few seconds
                 state()
-            await hal.sleep_ms(40)
+            await hal.sleep_ms(SCROLL_MS if scrolling else CLOCK_MS)
     finally:
         panel.off()
