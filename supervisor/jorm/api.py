@@ -21,6 +21,7 @@ from jorm import guestcfg
 from jorm.bus import BusError, valid_filter
 from jorm.fsutil import UnsafePath, safe_name, safe_relpath, write_atomic
 from jorm.guests import RefusedError
+from jorm.leafclient import LeafClient, DoorError
 from jorm.manifest import ManifestError
 from jorm.claims import ClaimError
 from jorm.panels import PanelError
@@ -557,6 +558,77 @@ def create_app(node, sup):
                        'rssi': p['rssi'], 'seed': p['seed']}
                       for p in sup.cluster.live()],
         }
+
+    # -- leaves: the flagship as a leaf console (query/drive over the sealed door) --
+    #
+    # A leaf has no HTTP server, so the browser cannot reach it — but this node can, over
+    # the sealed-UDP door (jorm/leafapi.py) that every node runs. These endpoints are a thin
+    # proxy: the browser calls this full node's HTTP, and it fans the same op out to the leaf
+    # over UDP with leafclient. Discovery (the beacon) comes later; for now a node knows its
+    # leaves from settings ("leaves": [{"name","host","port"?}]). A leaf that does not answer
+    # is reported online:false, not an error — the UI draws it greyed, not broken.
+    leaf_client = LeafClient(node.token)
+
+    def _leaf(name):
+        # A pinned settings entry wins (it may point across a subnet the beacon can't
+        # cross); otherwise a leaf heard on the discovery beacon.
+        for L in node.settings.get('leaves', []):
+            if L.get('name') == name and L.get('host'):
+                return L
+        for L in sup.cluster.discovered_leaves():
+            if L['name'] == name:
+                return L
+        return None
+
+    @app.get('/api/leaves')
+    async def api_leaves(req):
+        # Discovered leaves (beacon) plus pinned ones (settings); a pinned entry of the same
+        # name overrides, so an operator can fix a leaf's address without unplugging discovery.
+        out = {}
+        for L in sup.cluster.discovered_leaves():
+            out[L['name']] = {'name': L['name'], 'host': L['host'], 'port': L['port'],
+                              'board': L.get('board'), 'transport': L.get('transport'),
+                              'discovered': True}
+        for L in node.settings.get('leaves', []):
+            if L.get('name') and L.get('host'):
+                out[L['name']] = {'name': L['name'], 'host': L['host'],
+                                  'port': L.get('port', 5355), 'discovered': False}
+        return sorted(out.values(), key=lambda leaf: leaf['name'])
+
+    @app.get('/api/leaves/<name>/state')
+    async def api_leaf_state(req, name):
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        try:
+            r = await leaf_client.query(L['host'], 'state', port=L.get('port', 5355))
+            r['online'] = True
+            return r
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
+
+    @app.get('/api/leaves/<name>/log')
+    async def api_leaf_log(req, name):
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        try:
+            return await leaf_client.query(L['host'], 'log', n=_n(req), port=L.get('port', 5355))
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
+
+    @app.post('/api/leaves/<name>/guests/<gid>/<action>')
+    async def api_leaf_guest_action(req, name, gid, action):
+        if action not in ('start', 'stop', 'restart'):
+            return {'error': 'action is start | stop | restart'}, 400
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        try:
+            return await leaf_client.command(L['host'], action, guest=gid,
+                                             port=L.get('port', 5355))
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
 
     # -- usb (spec §8: virtual hardware, fixed at boot) ----------------------
 

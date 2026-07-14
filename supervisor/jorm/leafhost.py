@@ -310,6 +310,8 @@ def run_leaf_host(node):
             from jorm.netwatch import wifi_watch
             asyncio.create_task(wifi_watch(node))   # re-associate a dropped link
             asyncio.create_task(sup.ntp())          # wall clock, for guests like the clock
+            from jorm.cluster import announce_leaf
+            asyncio.create_task(announce_leaf(node))  # beacon presence + door for flagship discovery
         asyncio.create_task(sup.heartbeat())        # WDT + runaway detection
         asyncio.create_task(sup.telemetry())        # heap/temp on the local bus
         asyncio.create_task(_espnow_uplink(node, sup) if espnow else _uplink(node, sup))

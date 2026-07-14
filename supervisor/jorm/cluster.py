@@ -25,8 +25,9 @@ import socket
 import time
 
 PORT = 5354
+LEAF_PORT = 5355          # a leaf's sealed-UDP door (jorm.leafapi.PORT), advertised in its beacon
 BEACON_EVERY = 5          # seconds between our own announcements
-PEER_TTL_MS = 20000       # a peer unheard for this long has left
+PEER_TTL_MS = 20000       # a peer (or leaf) unheard for this long has left
 
 
 def _sockaddr(host, port):
@@ -40,6 +41,7 @@ class Discovery:
     def __init__(self, node):
         self.node = node
         self.peers = {}       # name -> {url, board, cluster, rssi, last_ms, seed}
+        self.leaves = {}      # name -> {host, port, board, transport, cluster, last_ms}
         self.sock = None
         self._seed(node.settings.get('peers', []))
 
@@ -92,6 +94,18 @@ class Discovery:
             return            # not ours to record, or it is us
         if b.get('cluster') != self.node.cluster:
             return            # a different cluster is not our business
+        if b.get('leaf'):
+            # A leaf has no HTTP server; it advertises its sealed-UDP door, not a url. Trust
+            # the ip it self-reports (like a full node self-reports its url) — portable across
+            # the sim and the board; the packet's source ip is only a fallback, and on the
+            # unix port that source is not even a dotted string. Kept apart from full-node
+            # peers: the browser reaches a leaf through this node's /api/leaves, not by hopping.
+            self.leaves[name] = {
+                'name': name, 'host': b.get('ip') or from_ip, 'port': int(b.get('door', LEAF_PORT)),
+                'board': b.get('board'), 'transport': b.get('transport', 'wifi'),
+                'cluster': b.get('cluster'), 'last_ms': time.ticks_ms(),
+            }
+            return
         # A beacon carries the sender's self-reported url; trust it, but if it looks
         # unset fall back to the packet's source ip so the peer is still reachable.
         url = (b.get('url') or ('http://%s' % from_ip)).rstrip('/')
@@ -114,11 +128,20 @@ class Discovery:
                 continue      # seeds and not-yet-heard entries do not time out
             if time.ticks_diff(now, p['last_ms']) > PEER_TTL_MS:
                 del self.peers[name]
+        for name in list(self.leaves):   # a leaf that stops beaconing has left, same TTL
+            if time.ticks_diff(now, self.leaves[name]['last_ms']) > PEER_TTL_MS:
+                del self.leaves[name]
 
     def live(self):
         """Peers to show right now — reaped of the departed, seeds always in."""
         self._reap()
         return sorted(self.peers.values(), key=lambda p: p['name'])
+
+    def discovered_leaves(self):
+        """Leaves heard on the beacon right now — reaped of the departed. The flagship
+        fronts these over /api/leaves without any settings entry."""
+        self._reap()
+        return sorted(self.leaves.values(), key=lambda leaf: leaf['name'])
 
     async def announce(self):
         """Broadcast our beacon on an interval. One task, forever."""
@@ -146,3 +169,29 @@ class Discovery:
                 self._ingest(raw, addr[0])
                 drained += 1
             await asyncio.sleep(0.5)
+
+
+async def announce_leaf(node):
+    """A WiFi leaf broadcasts its presence and its sealed-UDP door, so a flagship on the
+    LAN discovers it with no seed — the beacon's twin for a node that has no HTTP url to
+    advertise. (An ESP-NOW leaf has no IP to broadcast from; its gateway forwards it over
+    the bus instead.) Fire-and-forget: nothing held open, so it cannot starve a guest.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    s.settimeout(0)
+    dst = _sockaddr('255.255.255.255', PORT)
+    while True:
+        # Rebuilt each tick so a cluster rename (or a late hostname) is picked up.
+        beacon = json.dumps({
+            't': 'jorm', 'leaf': True, 'name': node.hostname, 'cluster': node.cluster,
+            'board': node.board_name(), 'door': LEAF_PORT, 'transport': 'wifi',
+            'ip': node.ip or '',      # self-reported: the address the flagship dials the door at
+        }).encode()
+        try:
+            s.sendto(beacon, dst)
+        except OSError as e:
+            # No link yet, or the broadcast route is not up — try again next tick.
+            node.log.append('sys', 'leaf-beacon: send failed — %s' % e)
+        await asyncio.sleep(BEACON_EVERY)

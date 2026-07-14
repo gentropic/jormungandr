@@ -476,7 +476,8 @@ const S = {
   clockOk: true, temp: null, drops: 0, watchers: [],
   open: { dc: true, node: true }, renaming: false,
   peers: [], clusterName: null,    // the rest of the cluster (one §1)
-  leaves: {},                      // ESP-NOW leaves this node is gateway for (three §7)
+  leaves: {},                      // leaves: ESP-NOW (bus, §7) + door-managed (/api/leaves)
+  leafSel: null, leafSig: '',      // selected leaf name (its detail owns the main pane)
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -649,12 +650,72 @@ function guestMenu(x, y, id) {
   ]);
 }
 
+// A leaf has no HTTP server; this node reaches it over the sealed-UDP door (§ leaf
+// console). A door leaf (from /api/leaves) can be driven start/stop/restart the same
+// as a local guest — the op just travels over UDP. An ESP-NOW leaf (from the bus) is
+// read-only here; it is managed through its gateway, not this pane.
+function leafMenu(x, y, name) {
+  const leaf = S.leaves[name];
+  if (!leaf) return;
+  const okey = 'leaf:' + name;
+  openMenu(x, y, name + (leaf.online === false ? ' · offline' : ''), [
+    { glyph: '◫', label: 'Open', run: () => selectLeaf(name) },
+    { glyph: S.open[okey] ? '▾' : '▸', label: S.open[okey] ? 'Collapse' : 'Expand',
+      run: () => { S.open[okey] = !S.open[okey]; renderTree(); } },
+  ]);
+}
+
+function leafGuestMenu(x, y, name, id) {
+  const leaf = S.leaves[name];
+  if (!leaf) return;
+  const g = leaf.guests[id] || {};
+  const live = g.state === 'running' || g.state === 'unresponsive';
+  const act = verb => leafAction(name, id, verb);
+  openMenu(x, y, name + ' · ' + id, leaf.door ? [
+    { glyph: '▶', label: 'Start', disabled: live, run: () => act('start') },
+    { glyph: '■', label: 'Stop', disabled: !live, run: () => act('stop') },
+    { glyph: '↻', label: 'Restart', run: () => act('restart') },
+    '-',
+    { glyph: '◫', label: 'Open leaf', run: () => selectLeaf(name) },
+  ] : [
+    { glyph: '◫', label: 'Open leaf', run: () => selectLeaf(name) },
+    { glyph: 'ⓘ', label: 'Managed via its gateway', disabled: true, run: () => {} },
+  ]);
+}
+
+async function leafAction(name, id, verb) {
+  try {
+    const r = await api('POST',
+      `/api/leaves/${encodeURIComponent(name)}/guests/${encodeURIComponent(id)}/${verb}`);
+    if (r.online === false) { toast(name + ' did not answer (offline?)', 'fault'); return; }
+    if (r.ok === false) { toast(`${verb} ${id}: ${r.err || 'refused'}`, 'fault'); return; }
+    if (S.leaves[name] && r.state) S.leaves[name].guests[id] = { id, state: r.state };
+    renderTree();
+    if (S.leafSel === name) renderMain();
+    loadLeaves();   // reconcile with the leaf's own view
+  } catch (e) { toast(`${verb} ${id}: ${e.message}`, 'fault'); }
+}
+
 // long-press is the phone's right-click
 function armLongPress(el, open) {
   let timer = null;
   el.addEventListener('touchstart', ev => {
     const t = ev.touches[0];
-    timer = setTimeout(() => { timer = null; open(t.clientX, t.clientY); }, 450);
+    timer = setTimeout(() => {
+      timer = null;
+      // The touchend that ends this long-press synthesizes a mouse click ~300 ms later,
+      // at the finger — and it lands on the menu/backdrop we are about to open, dismissing
+      // it instantly (the "flash then gone"). Swallow exactly that one synthetic click.
+      const swallow = e => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.removeEventListener('click', swallow, true);
+        clearTimeout(drop);
+      };
+      window.addEventListener('click', swallow, true);
+      const drop = setTimeout(() => window.removeEventListener('click', swallow, true), 800);
+      open(t.clientX, t.clientY);
+    }, 450);
   }, { passive: true });
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
   el.addEventListener('touchend', cancel);
@@ -717,6 +778,7 @@ function connect() {
     // already serving the shell/bus/first render at connect, and piling the cluster
     // reads onto that storm is what resets a connection. A second later it is idle.
     setTimeout(loadCluster, 1200);
+    setTimeout(loadLeaves, 1400);   // then the leaves it fronts over the door
   };
   ws.onmessage = ev => {
     S.lastMsg = Date.now();
@@ -940,6 +1002,40 @@ async function loadCluster() {
   renderTree();
 }
 
+// Door-managed leaves (§ leaf console): this node fronts them over the sealed-UDP door,
+// so the browser — which cannot speak UDP — reaches them through this node's HTTP. List
+// them, then query each one's state; they join S.leaves alongside any ESP-NOW leaves the
+// bus put there. A leaf that does not answer stays in the tree, marked offline.
+async function loadLeaves() {
+  if (!S.token || !S.base) return;
+  let list;
+  try { list = await api('GET', '/api/leaves'); } catch (e) { return; }
+  const configured = new Set();
+  await Promise.all(list.map(async L => {
+    configured.add(L.name);
+    let st;
+    try { st = await api('GET', '/api/leaves/' + encodeURIComponent(L.name) + '/state'); }
+    catch (e) { st = { online: false }; }
+    const guests = {};
+    if (st.online && st.guests) for (const g of st.guests) guests[g.id] = { id: g.id, state: g.state };
+    S.leaves[L.name] = { name: L.name, host: L.host, port: L.port, door: true,
+      transport: L.transport || 'wifi', online: !!st.online, heap_free: st.heap_free,
+      synced: st.synced, guests: st.online ? guests : ((S.leaves[L.name] || {}).guests || {}) };
+  }));
+  // Drop door leaves no longer configured — but never a bus/ESP-NOW leaf (it has no .door).
+  for (const name of Object.keys(S.leaves))
+    if (S.leaves[name].door && !configured.has(name)) delete S.leaves[name];
+  renderTree();
+  // Refresh the open leaf's detail only when its guest states actually changed, so a poll
+  // does not wipe the log tail you are reading (same contract as refresh()).
+  if (S.leafSel && S.leaves[S.leafSel]) {
+    const leaf = S.leaves[S.leafSel];
+    const sig = leaf.online + '|' + Object.keys(leaf.guests).sort()
+      .map(id => id + ':' + leaf.guests[id].state).join(',');
+    if (sig !== S.leafSig) { S.leafSig = sig; renderMain(); }
+  }
+}
+
 async function hop(url) {
   if (!url || url === S.base) return;
   toast('opening ' + url.replace(/^https?:\/\//, '') + '…');
@@ -1019,15 +1115,17 @@ function renderTree() {
         // The tree is narrow; the transport tag is the point of §7 (an ESP-NOW leaf
         // named as such under its gateway), so it right-aligns and the running/total —
         // redundant once you open the branch to its guests — is dropped to make room.
-        rows.push(`<button class="trow leaf" data-tw="${esc(okey)}" title="${lrun}/${gids.length} running">` +
+        const loff = leaf.door && leaf.online === false;
+        rows.push(`<button class="trow leaf${S.leafSel === name ? ' sel' : ''}" ` +
+          `data-tw="${esc(okey)}" data-leaf="${esc(name)}" title="${lrun}/${gids.length} running">` +
           `<span class="tw">${gids.length ? (open ? '▾' : '▸') : '·'}</span>` +
-          `<span class="st ${lrun ? 'go' : 'off'}">◎</span>${esc(name)}` +
+          `<span class="st ${loff ? 'fault' : lrun ? 'go' : 'off'}">${loff ? '⚠' : '◎'}</span>${esc(name)}` +
           (leaf.transport ? `<span class="xfer" style="margin-left:auto">${esc(leaf.transport)}</span>` : '') +
           `</button>`);
         if (open) {
           for (const id of gids) {
             const [gl, cls] = GLYPH[leaf.guests[id].state] || ['?', 'off'];
-            rows.push(`<button class="trow lg" tabindex="-1">` +
+            rows.push(`<button class="trow lg" data-leaf="${esc(name)}" data-lgid="${esc(id)}">` +
               `<span class="st ${cls}">${gl}</span>(${esc(id)})</button>`);
           }
         }
@@ -1089,8 +1187,12 @@ function renderTree() {
     const tw = row.dataset.tw;
     const id = row.dataset.id;
     const hopUrl = row.dataset.hop;
+    const leafName = row.dataset.leaf;
+    const lgid = row.dataset.lgid;
     const menu = row.dataset.root ? clusterMenu
-      : (id ? (x, y) => guestMenu(x, y, id) : (id === '' ? nodeMenu : null));
+      : (lgid !== undefined ? (x, y) => leafGuestMenu(x, y, leafName, lgid)
+      : (leafName !== undefined ? (x, y) => leafMenu(x, y, leafName)
+      : (id ? (x, y) => guestMenu(x, y, id) : (id === '' ? nodeMenu : null))));
 
     row.onclick = ev => {
       // clicking the twisty folds; clicking the row selects, or hops to a peer
@@ -1100,6 +1202,7 @@ function renderTree() {
         return;
       }
       if (hopUrl) { hop(hopUrl); return; }
+      if (leafName !== undefined) { selectLeaf(leafName); return; }
       if (id !== undefined) select(id || null);
     };
     if (menu) {
@@ -1112,8 +1215,18 @@ function renderTree() {
 function select(id) {
   teardown();
   S.sel = id;
+  S.leafSel = null;
   closeMenu();
   drawer(false);   // on a phone: navigate, then read
+  renderTree(); renderMain();
+}
+function selectLeaf(name) {
+  teardown();
+  S.sel = null;
+  S.leafSel = name;
+  S.leafSig = '';
+  closeMenu();
+  drawer(false);
   renderTree(); renderMain();
 }
 function setTab(tab) {
@@ -1136,10 +1249,82 @@ function renderMain() {
   const main = $('#main');
   S.liveWidgets = [];
   S.bindWatch = {};
-  if (S.sel === null) renderNode(main); else renderGuest(main, S.sel);
+  if (S.leafSel) renderLeaf(main, S.leafSel);
+  else if (S.sel === null) renderNode(main); else renderGuest(main, S.sel);
   main.querySelectorAll('.tab').forEach(tab => tab.onclick = () => setTab(tab.dataset.tab));
   main.querySelectorAll('[data-panel]').forEach(el => wirePanel(el.dataset.panel));
   setScope(currentScope());
+}
+
+// A leaf's detail pane. A leaf is not a node — no shell, no bus, no tabs — so this is a
+// single view: its link, its guests (driveable when it is a door leaf), and its log tailed
+// over the door. Rendered from S.leaves (kept fresh by loadLeaves); the log is fetched here.
+function renderLeaf(main, name) {
+  const leaf = S.leaves[name];
+  if (!leaf) { select(null); return; }
+  const gids = Object.keys(leaf.guests).sort();
+  const door = !!leaf.door;
+  const online = leaf.online !== false;
+  const grows = gids.map(id => {
+    const g = leaf.guests[id];
+    const live = g.state === 'running' || g.state === 'unresponsive';
+    const cell = door ? `<td class="la">
+        <button class="btn secondary lgact" data-act="start" data-id="${esc(id)}" ${live ? 'disabled' : ''} title="start">▶</button>
+        <button class="btn secondary lgact" data-act="stop" data-id="${esc(id)}" ${live ? '' : 'disabled'} title="stop">■</button>
+        <button class="btn secondary lgact" data-act="restart" data-id="${esc(id)}" title="restart">↻</button></td>`
+      : `<td class="la note">gateway</td>`;
+    return `<tr><td>${esc(id)}</td><td><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span></td>${cell}</tr>`;
+  }).join('') || `<tr><td colspan="3" class="note">no guests on this leaf</td></tr>`;
+  const running = gids.filter(id => leaf.guests[id].state === 'running').length;
+  const heap = (door && leaf.heap_free != null) ? (leaf.heap_free / 1024).toFixed(0) : '—';
+
+  main.innerHTML = `<div class="grid">
+    <div class="readout" style="grid-column:1/-1">
+      <div class="readout-top"><span>Leaf · ${esc(name)}</span><span>${online ? '◉ online' : '⚠ offline'}</span></div>
+      <div class="readout-bd">
+        <div class="gauge ${online ? 'go' : 'fault'}"><div class="glbl">Link</div>
+          <div class="gval">${esc(leaf.transport || '—')}</div></div>
+        <div class="gauge"><div class="glbl">Heap free</div>
+          <div class="gval">${heap}<span class="unit">KB</span></div></div>
+        <div class="gauge${door && !leaf.synced ? ' caution' : ''}"><div class="glbl">Clock</div>
+          <div class="gval">${door ? (leaf.synced ? 'sync' : 'unsync') : '—'}</div></div>
+        <div class="gauge go"><div class="glbl">Running</div>
+          <div class="gval">${running}<span class="unit">/${gids.length}</span></div></div>
+      </div>
+    </div>
+    <div class="panel"><div class="panel-hd"><span><span class="dot"></span>Leaf</span><span>${door ? 'sealed-UDP door' : 'ESP-NOW · bus'}</span></div>
+      <div class="panel-bd"><dl class="kv">
+        <dt>name</dt><dd>${esc(name)}</dd>
+        <dt>reach</dt><dd>${door ? esc((leaf.host || '?') + ':' + (leaf.port || 5355)) + ' · sealed-UDP' : 'forwarded by its gateway'}</dd>
+        <dt>transport</dt><dd>${esc(leaf.transport || '—')}</dd>
+        <dt>status</dt><dd>${online ? 'online' : '<span style="color:var(--au-warn)">⚠ not answering the door</span>'}</dd>
+      </dl></div></div>
+    <div class="panel"><div class="panel-hd"><span>Guests</span><span>${gids.length}</span></div>
+      <div class="panel-bd"><table class="cl">
+        <tr><th>id</th><th>state</th><th></th></tr>${grows}</table></div></div>
+    ${door ? `<div class="panel" style="grid-column:1/-1"><div class="panel-hd"><span>Leaf log</span><span>over the door</span></div>
+      <div class="panel-bd"><div class="term" id="leaflog"><span class="note">loading…</span></div></div></div>` : ''}
+  </div>`;
+
+  main.querySelectorAll('.lgact').forEach(b =>
+    b.onclick = () => leafAction(name, b.dataset.id, b.dataset.act));
+  if (door && online) loadLeafLog(name);
+  else if (door) { const el = $('#leaflog'); if (el) el.innerHTML = '<span class="note">leaf is not answering the door</span>'; }
+}
+
+async function loadLeafLog(name) {
+  const el = $('#leaflog');
+  if (!el) return;
+  try {
+    const r = await api('GET', '/api/leaves/' + encodeURIComponent(name) + '/log?n=' + SCROLLBACK);
+    if (r.online === false || !r.log || !r.log.length) {
+      el.innerHTML = '<span class="note">no log returned over the door</span>';
+      return;
+    }
+    el.innerHTML = '';
+    for (const l of r.log)
+      termLine(el, typeof l === 'string' ? esc(l) : consoleHTML(l));
+  } catch (e) { el.innerHTML = '<span class="note">log: ' + esc(e.message) + '</span>'; }
 }
 
 function renderNode(main) {
@@ -1803,6 +1988,7 @@ function boot() {
 // another board. Re-poll on a slow cadence so the tree stays current without the
 // per-second cost of the guest list; loadCluster no-ops when logged out.
 setInterval(loadCluster, 5000);
+setInterval(loadLeaves, 5000);
 </script>
 </body>
 </html>
