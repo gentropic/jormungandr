@@ -630,6 +630,45 @@ def create_app(node, sup):
         except DoorError as e:
             return {'name': name, 'online': False, 'error': str(e)}
 
+    @app.get('/api/leaves/<name>/guests/<gid>/config')
+    async def api_leaf_guest_config_get(req, name, gid):
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        try:
+            return await leaf_client.query(L['host'], 'config', guest=gid,
+                                           port=L.get('port', 5355))
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
+
+    @app.put('/api/leaves/<name>/guests/<gid>/config')
+    async def api_leaf_guest_config_put(req, name, gid):
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        try:
+            return await leaf_client.command(L['host'], 'config', guest=gid, set=req.json,
+                                             port=L.get('port', 5355))
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
+
+    @app.post('/api/leaves/<name>/pub')
+    async def api_leaf_pub(req, name):
+        # The generic pipe surfaced over HTTP: publish an arbitrary message onto a leaf's bus
+        # (a guest command a panel binds to, say). The door refuses $-rooted topics.
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        body = req.json
+        if not isinstance(body, dict) or not body.get('topic'):
+            return {'error': 'expected {topic, msg, retain?}'}, 400
+        try:
+            return await leaf_client.query(L['host'], 'pub', topic=body['topic'],
+                                           msg=body.get('msg'), retain=bool(body.get('retain')),
+                                           port=L.get('port', 5355))
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
+
     # -- usb (spec §8: virtual hardware, fixed at boot) ----------------------
 
     @app.get('/api/usb')

@@ -22,8 +22,9 @@ for (let i = 0; i < 60; i++) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-// A couple of guests so the leaf has something to show and drive.
-for (const g of ['echoer', 'blinky']) {
+// A couple of guests so the leaf has something to show and drive; thermo declares config,
+// so it exercises the config-over-door form.
+for (const g of ['echoer', 'blinky', 'thermo']) {
   await fetch(`${BASE}/api/guests`, { method: 'POST', headers: HDRS, body: JSON.stringify({
     manifest: JSON.parse(ex(g + '/manifest.json')), files: { 'main.py': ex(g + '/main.py') } }) }).catch(() => {});
   await fetch(`${BASE}/api/guests/${g}/start`, { method: 'POST', headers: HDRS }).catch(() => {});
@@ -87,6 +88,25 @@ if (toggled) {
   await rowIs('running');
   ok(`start over the door brings ${toggled} back to running`, true);
 }
+
+// config over the door: a guest's ⚙ loads its schema-driven form, a save writes it back
+await page.evaluate(() => {
+  const b = [...document.querySelectorAll('.lgcfg')].find(x => x.dataset.id === 'thermo');
+  if (b) b.click();
+});
+await page.waitForFunction(() =>
+  document.querySelector('#leafcfg [data-key="period_ms"]'), null, { timeout: 8000 });
+ok('a leaf guest ⚙ loads its config schema over the door (sliders render)', true);
+await page.evaluate(() => {
+  const s = document.querySelector('#leafcfg [data-key="period_ms"]');
+  s.value = 2500; s.dispatchEvent(new Event('input'));
+});
+await page.click('#leafcfg .cfgsave');
+// the write round-trips the door and the form reloads with the new value
+await page.waitForFunction(() =>
+  document.querySelector('#leafcfg [data-key="period_ms"]') &&
+  document.querySelector('#leafcfg [data-key="period_ms"]').value === '2500', null, { timeout: 8000 });
+ok('editing a leaf guest slider and saving writes config over the door', true);
 
 // the same actions on a right-click menu in the tree
 await page.click('.trow.leaf .tw');   // expand its guests

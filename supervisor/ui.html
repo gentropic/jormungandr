@@ -477,7 +477,7 @@ const S = {
   open: { dc: true, node: true }, renaming: false,
   peers: [], clusterName: null,    // the rest of the cluster (one §1)
   leaves: {},                      // leaves: ESP-NOW (bus, §7) + door-managed (/api/leaves)
-  leafSel: null, leafSig: '',      // selected leaf name (its detail owns the main pane)
+  leafSel: null, leafSig: '', leafCfgGid: null,  // selected leaf; and a guest whose config is open
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -1032,7 +1032,12 @@ async function loadLeaves() {
     const leaf = S.leaves[S.leafSel];
     const sig = leaf.online + '|' + Object.keys(leaf.guests).sort()
       .map(id => id + ':' + leaf.guests[id].state).join(',');
-    if (sig !== S.leafSig) { S.leafSig = sig; renderMain(); }
+    // Re-render on a real change — but never while a config form is loaded, or the poll would
+    // wipe it out from under an edit. Leave S.leafSig stale so it re-renders once the form is gone.
+    if (sig !== S.leafSig && !S.leafCfgGid) {
+      S.leafSig = sig;
+      renderMain();
+    }
   }
 }
 
@@ -1216,6 +1221,7 @@ function select(id) {
   teardown();
   S.sel = id;
   S.leafSel = null;
+  S.leafCfgGid = null;
   closeMenu();
   drawer(false);   // on a phone: navigate, then read
   renderTree(); renderMain();
@@ -1225,6 +1231,7 @@ function selectLeaf(name) {
   S.sel = null;
   S.leafSel = name;
   S.leafSig = '';
+  S.leafCfgGid = null;
   closeMenu();
   drawer(false);
   renderTree(); renderMain();
@@ -1246,6 +1253,9 @@ function tabsHTML(tabs, active) {
 }
 
 function renderMain() {
+  // A loaded leaf config form must survive background re-renders (bus, poll): rebuilding the
+  // pane would wipe it mid-edit. While one is open, freeze the pane — navigating clears it.
+  if (S.leafSel && S.leafCfgGid) return;
   const main = $('#main');
   S.liveWidgets = [];
   S.bindWatch = {};
@@ -1271,7 +1281,8 @@ function renderLeaf(main, name) {
     const cell = door ? `<td class="la">
         <button class="btn secondary lgact" data-act="start" data-id="${esc(id)}" ${live ? 'disabled' : ''} title="start">▶</button>
         <button class="btn secondary lgact" data-act="stop" data-id="${esc(id)}" ${live ? '' : 'disabled'} title="stop">■</button>
-        <button class="btn secondary lgact" data-act="restart" data-id="${esc(id)}" title="restart">↻</button></td>`
+        <button class="btn secondary lgact" data-act="restart" data-id="${esc(id)}" title="restart">↻</button>
+        <button class="btn secondary lgcfg" data-id="${esc(id)}" title="config">⚙</button></td>`
       : `<td class="la note">gateway</td>`;
     return `<tr><td>${esc(id)}</td><td><span class="badge ${BADGE[g.state] || 'off'}">${esc(g.state)}</span></td>${cell}</tr>`;
   }).join('') || `<tr><td colspan="3" class="note">no guests on this leaf</td></tr>`;
@@ -1302,12 +1313,16 @@ function renderLeaf(main, name) {
     <div class="panel"><div class="panel-hd"><span>Guests</span><span>${gids.length}</span></div>
       <div class="panel-bd"><table class="cl">
         <tr><th>id</th><th>state</th><th></th></tr>${grows}</table></div></div>
+    ${door ? `<div class="panel"><div class="panel-hd"><span>Guest config</span><span>over the door</span></div>
+      <div class="panel-bd" id="leafcfg"><span class="note">pick a guest's ⚙ to load its controls</span></div></div>` : ''}
     ${door ? `<div class="panel" style="grid-column:1/-1"><div class="panel-hd"><span>Leaf log</span><span>over the door</span></div>
       <div class="panel-bd"><div class="term" id="leaflog"><span class="note">loading…</span></div></div></div>` : ''}
   </div>`;
 
   main.querySelectorAll('.lgact').forEach(b =>
     b.onclick = () => leafAction(name, b.dataset.id, b.dataset.act));
+  main.querySelectorAll('.lgcfg').forEach(b =>
+    b.onclick = () => loadLeafConfig(name, b.dataset.id));
   if (door && online) loadLeafLog(name);
   else if (door) { const el = $('#leaflog'); if (el) el.innerHTML = '<span class="note">leaf is not answering the door</span>'; }
 }
@@ -1599,18 +1614,17 @@ function renderGuest(main, id) {
   if (tab === 'files') loadFiles(id);
 }
 
-async function loadConfig(id) {
-  const host = $('#cfgbody');
-  let got;
-  try { got = await api('GET', '/api/guests/' + id + '/config'); }
-  catch (e) { host.innerHTML = '<span class="note">config: ' + esc(e.message) + '</span>'; return; }
-  if (!got.schema) {
+// The config form is the same whether the guest is local (over HTTP) or on a leaf (over the
+// door) — only where the schema/values come from and where a save goes differ. So render it
+// from a plain {schema, values, pending_restart, undeclared} and a save(updates) callback.
+function renderConfigForm(host, cfg, onSave) {
+  if (!cfg || !cfg.schema) {
     host.innerHTML = '<span class="note">no config schema declared — hal.ui.config(fields) puts a form here</span>';
     return;
   }
-  host.innerHTML = got.schema.map(f => {
-    const val = got.values[f.key];
-    const pending = got.pending_restart.includes(f.key);
+  host.innerHTML = cfg.schema.map(f => {
+    const val = cfg.values[f.key];
+    const pending = (cfg.pending_restart || []).includes(f.key);
     const chips = (f.live ? ' <span class="badge info">live</span>' : '') +
       (pending ? ' <span class="badge caution">⚠ pending restart</span>' : '');
     let ctl = '';
@@ -1632,25 +1646,55 @@ async function loadConfig(id) {
     }
     return `<div class="field"><label>${esc(f.label || f.key)}${chips}</label>${ctl}</div>`;
   }).join('') +
-  (got.undeclared.length
-    ? `<p class="note">⚠ in the store but no longer declared: ${got.undeclared.map(esc).join(', ')}</p>` : '') +
-  '<p style="margin:.4rem 0 0"><button class="btn primary" id="cfgsave">save</button></p>';
-  $('#cfgsave').onclick = async () => {
+  ((cfg.undeclared || []).length
+    ? `<p class="note">⚠ in the store but no longer declared: ${cfg.undeclared.map(esc).join(', ')}</p>` : '') +
+  '<p style="margin:.4rem 0 0"><button class="btn primary cfgsave" id="cfgsave">save</button></p>';
+  host.querySelector('.cfgsave').onclick = async () => {
     const updates = {};
     host.querySelectorAll('[data-key]').forEach(el => {
       const w = el.dataset.w;
       updates[el.dataset.key] = w === 'slider' ? Number(el.value)
         : w === 'toggle' ? el.checked : el.value;
     });
-    try {
-      const res = await api('PUT', '/api/guests/' + id + '/config', updates);
-      toast('config saved' +
-        (res.applied_live.length ? ' · live: ' + res.applied_live.join(', ') : '') +
-        (res.pending_restart.length ? ' · pending restart: ' + res.pending_restart.join(', ') : ''),
-        res.pending_restart.length ? 'fault' : 'info');
-      loadConfig(id);
-    } catch (e) { toast('config: ' + e.message, 'fault'); }
+    try { await onSave(updates); } catch (e) { toast('config: ' + e.message, 'fault'); }
   };
+}
+
+function cfgToast(label, res) {
+  toast(label + ' config saved' +
+    (res.applied_live && res.applied_live.length ? ' · live: ' + res.applied_live.join(', ') : '') +
+    (res.pending_restart && res.pending_restart.length ? ' · pending restart: ' + res.pending_restart.join(', ') : ''),
+    res.pending_restart && res.pending_restart.length ? 'fault' : 'info');
+}
+
+async function loadConfig(id) {
+  const host = $('#cfgbody');
+  let got;
+  try { got = await api('GET', '/api/guests/' + id + '/config'); }
+  catch (e) { host.innerHTML = '<span class="note">config: ' + esc(e.message) + '</span>'; return; }
+  renderConfigForm(host, got, async updates => {
+    cfgToast('', await api('PUT', '/api/guests/' + id + '/config', updates));
+    loadConfig(id);
+  });
+}
+
+// A leaf guest's config, fetched and written over the door (the door wraps it in {config},
+// and a write returns {result}). Same form, same widgets — just a different pipe.
+async function loadLeafConfig(name, gid) {
+  S.leafCfgGid = gid;   // mark it open, so a background re-render won't wipe the form mid-load
+  const host = $('#leafcfg');
+  if (!host) return;
+  host.innerHTML = '<span class="note">loading ' + esc(gid) + ' config over the door…</span>';
+  const base = `/api/leaves/${encodeURIComponent(name)}/guests/${encodeURIComponent(gid)}/config`;
+  let got;
+  try { got = await api('GET', base); }
+  catch (e) { host.innerHTML = '<span class="note">config: ' + esc(e.message) + '</span>'; return; }
+  if (got.online === false) { host.innerHTML = '<span class="note">leaf is not answering the door</span>'; return; }
+  renderConfigForm(host, got.config || got, async updates => {
+    const res = await api('PUT', base, updates);
+    cfgToast(gid, res.result || {});
+    loadLeafConfig(name, gid);
+  });
 }
 
 // ── the file editor ───────────────────────────────────────────────────────

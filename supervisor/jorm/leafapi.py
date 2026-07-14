@@ -149,6 +149,39 @@ async def _dispatch(node, sup, req, nonces, uploads):
         while len(nonces) > _NONCE_CAP:
             nonces.pop(0)
         return {'ok': True, 'nonce': n}
+    if op == 'config':
+        # Typed on purpose: rendering a control needs the SCHEMA (which widgets, their
+        # ranges), which a raw pub can't carry, and a write goes through guestcfg's
+        # validation + live/restart machinery. A read is side-effect-free; a `set` is a
+        # persistent change, so it is nonce-guarded like the other mutating ops.
+        from jorm import guestcfg
+        g = sup.guests.get(req.get('guest'))
+        if g is None:
+            return {'ok': False, 'err': 'no such guest: %s' % req.get('guest')}
+        if 'set' in req:
+            if req.get('nonce') not in nonces:
+                return {'ok': False, 'err': 'stale or missing nonce — fetch one with op=nonce'}
+            nonces.remove(req['nonce'])
+            try:
+                result = guestcfg.write(g, req['set'])
+            except Exception as e:
+                return {'ok': False, 'err': 'config: %s' % e}
+            return {'ok': True, 'config': guestcfg.view(g), 'result': result}
+        return {'ok': True, 'config': guestcfg.view(g)}
+    if op == 'pub':
+        # The generic pipe: publish an arbitrary message to this leaf's local bus, exactly
+        # as a bus WebSocket client may on a full node — so any guest command (a brightness
+        # set, a banner, a scroll) needs no verb of its own. $-rooted topics are refused: the
+        # door widens who may COMMAND a guest, never who may forge the node's own $sys state.
+        topic = req.get('topic')
+        if not isinstance(topic, str) or not topic or topic.startswith('$'):
+            return {'ok': False, 'err': 'pub needs a non-$ topic'}
+        try:
+            delivered = sup.bus.publish(topic, req.get('msg'),
+                                        retain=bool(req.get('retain')), owner='door')
+        except Exception as e:
+            return {'ok': False, 'err': 'pub: %s' % e}
+        return {'ok': True, 'topic': topic, 'delivered': delivered}
     if op in _MUTATING:
         n = req.get('nonce')
         if n not in nonces:

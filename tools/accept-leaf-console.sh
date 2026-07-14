@@ -76,6 +76,36 @@ import json,sys; d=json.load(sys.stdin)
 assert d.get('ok') and d.get('log'), d" || fail "leaf log empty"
 pass "leaf log tailed over the door"
 
+echo "== config over the door: read a leaf guest's schema, then set it"
+$JORM create "$ROOT/examples/thermo" >/dev/null || fail "could not install thermo"
+API -X POST "$JORM_URL/api/leaves/self/guests/thermo/start" >/dev/null || fail "start thermo over door"
+API "$JORM_URL/api/leaves/self/guests/thermo/config" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and d['config']['schema'], d
+keys=[f['key'] for f in d['config']['schema']]
+assert 'period_ms' in keys and 'gauge_max_c' in keys, d" || fail "config schema not returned over the door"
+pass "config schema fetched over the door (the UI needs it to draw sliders)"
+CT='Content-Type: application/json'
+API -H "$CT" -X PUT "$JORM_URL/api/leaves/self/guests/thermo/config" -d '{"period_ms": 2000}' | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and 'period_ms' in d['result']['applied_live'], d" || fail "live config set over door"
+pass "live key (period_ms) applied over the door, with a nonce"
+API -H "$CT" -X PUT "$JORM_URL/api/leaves/self/guests/thermo/config" -d '{"gauge_max_c": 80}' | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and 'gauge_max_c' in d['result']['pending_restart'], d" || fail "pending config set over door"
+pass "non-live key (gauge_max_c) flagged pending-restart over the door"
+
+echo "== the generic pipe: pub an arbitrary bus message to a subscribed guest"
+API -H "$CT" -X POST "$JORM_URL/api/leaves/self/pub" \
+    -d '{"topic": "cmd/thermo/period", "msg": {"value": 1500, "origin": "test"}}' | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and d.get('delivered', 0) >= 1, d" || fail "pub to a subscribed guest did not deliver"
+pass "pub reached the subscribed guest over the door — no per-command verb needed"
+API -H "$CT" -X POST "$JORM_URL/api/leaves/self/pub" -d '{"topic": "$sys/leaf/forged", "msg": {}}' | python3 -c '
+import json,sys; d=json.load(sys.stdin)
+assert d.get("ok") is False and "non-$" in d.get("err",""), d' || fail 'a $-rooted pub was not refused'
+pass "a \$-rooted pub is refused — the pipe commands guests, it does not forge \$sys"
+
 echo "== an unknown leaf is a clean 404, not a hang"
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JORM_TOKEN" \
        "$JORM_URL/api/leaves/nosuch/state")
