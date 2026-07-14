@@ -67,6 +67,17 @@ await page.waitForFunction(() => {
 }, null, { timeout: 10000 });
 ok('the leaf log tails over the door', true);
 
+// the Send message box publishes cmd/<guest>/show over the door's pub pipe
+await page.evaluate(() => {
+  const t = document.querySelector('#msgtext');
+  t.value = 'hi there'; t.dispatchEvent(new Event('input'));
+  document.querySelector('#msgnotify').click();
+});
+await page.waitForFunction(() =>
+  [...document.querySelectorAll('.toast')].some(t => /sent to/.test(t.textContent)),
+  null, { timeout: 6000 });
+ok('the Send message box publishes cmd/<guest>/show over the door', true);
+
 // drive a running guest over the door: stop it, watch the pane follow, start it back
 const toggled = await page.evaluate(() => {
   const b = [...document.querySelectorAll('.lgact[data-act="stop"]')].find(x => !x.disabled);

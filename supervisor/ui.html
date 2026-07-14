@@ -482,7 +482,7 @@ const S = {
   open: { dc: true, node: true }, renaming: false,
   peers: [], clusterName: null,    // the rest of the cluster (one §1)
   leaves: {},                      // leaves: ESP-NOW (bus, §7) + door-managed (/api/leaves)
-  leafSel: null, leafSig: '', leafCfgGid: null,  // selected leaf; and a guest whose config is open
+  leafSel: null, leafSig: '', leafCfgGid: null, msgDraft: '',  // selected leaf; open config; message draft
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -710,6 +710,22 @@ async function leafAction(name, id, verb) {
     if (S.leafSel === name) renderMain();
     loadLeaves();   // reconcile with the leaf's own view
   } catch (e) { toast(`${verb} ${id}: ${e.message}`, 'fault'); }
+}
+
+// Send a display message to a leaf guest over the door's generic pub pipe. `show` scrolls once;
+// `banner` persists until an empty one clears it — the convention the clock guest follows.
+async function leafSend(name, gid, verb, text) {
+  if (!gid) return toast('no guest to message', 'fault');
+  if (verb === 'show' && !text) return toast('type a message first', 'fault');
+  const msg = verb === 'show' ? { text, secs: 10 } : text;
+  try {
+    const r = await api('POST', `/api/leaves/${encodeURIComponent(name)}/pub`,
+      { topic: `cmd/${gid}/${verb}`, msg });
+    if (r && r.online === false) toast(name + ' did not answer the door', 'fault');
+    else if (r && r.ok === false) toast('send: ' + (r.err || 'refused'), 'fault');
+    else toast((verb === 'banner' ? (text ? 'banner set on ' : 'banner cleared on ') : 'sent to ')
+      + gid + (r && r.delivered === 0 ? ' — but no guest is listening' : ''));
+  } catch (e) { toast('send: ' + e.message, 'fault'); }
 }
 
 // long-press is the phone's right-click
@@ -1332,6 +1348,17 @@ function renderLeaf(main, name) {
     <div class="panel"><div class="panel-hd"><span>Guests</span><span>${gids.length}</span></div>
       <div class="panel-bd"><table class="cl">
         <tr><th>id</th><th>state</th><th></th></tr>${grows}</table></div></div>
+    ${door && gids.length ? `<div class="panel"><div class="panel-hd"><span>Send message</span><span>cmd/&lt;guest&gt;/show</span></div>
+      <div class="panel-bd">
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">
+          <select class="wsel" id="msgguest">${gids.map(id => `<option>${esc(id)}</option>`).join('')}</select>
+          <input class="wsel" id="msgtext" placeholder="text to display" style="flex:1;min-width:7em">
+          <button class="btn secondary" id="msgnotify">Notify</button>
+          <button class="btn secondary" id="msgbanner">Banner</button>
+          <button class="btn secondary" id="msgclear" title="clear the banner">Clear</button>
+        </div>
+        <p class="note" style="margin:.35rem 0 0">Notify scrolls once; Banner persists until cleared.</p>
+      </div></div>` : ''}
     ${door ? `<div class="panel"><div class="panel-hd"><span>Guest config</span><span>over the door</span></div>
       <div class="panel-bd" id="leafcfg"><span class="note">pick a guest's ⚙ to load its controls</span></div></div>` : ''}
     ${door ? `<div class="panel" style="grid-column:1/-1"><div class="panel-hd"><span>Leaf log</span><span>over the door</span></div>
@@ -1342,6 +1369,16 @@ function renderLeaf(main, name) {
     b.onclick = () => leafAction(name, b.dataset.id, b.dataset.act));
   main.querySelectorAll('.lgcfg').forEach(b =>
     b.onclick = () => loadLeafConfig(name, b.dataset.id));
+  const mt = main.querySelector('#msgtext');
+  if (mt) {
+    mt.value = S.msgDraft || '';
+    mt.oninput = () => { S.msgDraft = mt.value; };
+    const g = () => main.querySelector('#msgguest').value;
+    mt.onkeydown = ev => { if (ev.key === 'Enter') main.querySelector('#msgnotify').click(); };
+    main.querySelector('#msgnotify').onclick = () => leafSend(name, g(), 'show', mt.value);
+    main.querySelector('#msgbanner').onclick = () => leafSend(name, g(), 'banner', mt.value);
+    main.querySelector('#msgclear').onclick = () => leafSend(name, g(), 'banner', '');
+  }
   if (door && online) loadLeafLog(name);
   else if (door) { const el = $('#leaflog'); if (el) el.innerHTML = '<span class="note">leaf is not answering the door</span>'; }
 }
