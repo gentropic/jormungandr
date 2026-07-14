@@ -102,6 +102,12 @@ class Hal:
                 count = e.get('count', 1)
         return RgbHandle(n, count)
 
+    def matrix(self):
+        mx = self._caps().get('matrix')
+        if not mx or not self._sup.claims.matrix_grant(self._guest.id, mx.get('cs')):
+            raise CapError('matrix not granted to guest "%s"' % self._guest.id)
+        return MatrixHandle(mx.get('spi', 1), mx['sck'], mx['mosi'], mx['cs'], mx.get('n', 4))
+
     def usb(self):
         """hal.usb — the guest's own granted USB interface, and only its own.
 
@@ -413,6 +419,50 @@ class RgbHandle:
     def off(self):
         self._np.fill((0, 0, 0))
         self._np.write()
+
+
+class MatrixHandle:
+    """An 8-row LED matrix (a MAX7219 chain) as a framebuffer. Like RgbHandle, the
+    supervisor owns the wire — the SPI and the chip registers — and a guest gets a
+    surface: fill/pixel/text/scroll and show(). The built-in framebuf provides the 8x8
+    text font; a guest brings its own if it wants bigger glyphs (the clock does)."""
+
+    def __init__(self, spi_id, sck, mosi, cs, n):
+        from jorm.max7219 import Matrix    # lazy: pulls framebuf only for a matrix guest
+        spi = machine.SPI(spi_id, baudrate=10_000_000, polarity=0, phase=0,
+                          sck=machine.Pin(sck), mosi=machine.Pin(mosi))
+        self._m = Matrix(spi, cs, n)
+        self._m.init()
+        self.width = self._m.width
+        self.height = 8
+
+    def fill(self, v=0):
+        self._m.fb.fill(1 if v else 0)
+
+    def pixel(self, x, y, v=1):
+        self._m.fb.pixel(int(x), int(y), 1 if v else 0)
+
+    def text(self, s, x=0, y=0, v=1):
+        self._m.fb.text(str(s), int(x), int(y), 1 if v else 0)
+
+    def hline(self, x, y, w, v=1):
+        self._m.fb.hline(int(x), int(y), int(w), 1 if v else 0)
+
+    def rect(self, x, y, w, h, v=1, fill=False):
+        self._m.fb.rect(int(x), int(y), int(w), int(h), 1 if v else 0, fill)
+
+    def scroll(self, dx, dy):
+        self._m.fb.scroll(int(dx), int(dy))
+
+    def brightness(self, level):
+        self._m.brightness(max(0, min(15, int(level))))
+
+    def show(self):
+        self._m.show()
+
+    def off(self):
+        self._m.fb.fill(0)
+        self._m.show()
 
 
 class AdcHandle:

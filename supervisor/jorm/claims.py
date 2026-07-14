@@ -28,6 +28,11 @@ class Claims:
         reqs += [(n, 'adc', None, None) for n in caps.get('adc', [])]
         reqs += [(e['cs'], 'cs', None, e['bus']) for e in caps.get('spi', [])]
         reqs += [(e['pin'], 'rgb', None, None) for e in caps.get('rgb', [])]
+        mx = caps.get('matrix')
+        if mx:                          # an LED matrix owns its sck/mosi/cs outright
+            reqs += [(mx['sck'], 'matrix', None, None),
+                     (mx['mosi'], 'matrix', None, None),
+                     (mx['cs'], 'matrix', None, None)]
         return reqs
 
     def grant(self, guest_id, caps):
@@ -101,6 +106,9 @@ class Claims:
 
     def rgb_grant(self, guest_id, n):
         return self._pin_mode(guest_id, n, ('rgb',))
+
+    def matrix_grant(self, guest_id, cs):
+        return self._pin_mode(guest_id, cs, ('matrix',))
 
     def spi_grant(self, guest_id, bus, cs):
         entry = self._pin_mode(guest_id, cs, ('cs',))

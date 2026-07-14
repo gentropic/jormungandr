@@ -1,0 +1,18 @@
+{
+  "spec": 0,
+  "id": "clock",
+  "name": "Clock",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": true,
+  "restart": "on-crash",
+  "caps": {
+    "matrix": {"sck": 25, "mosi": 32, "cs": 33, "n": 4},
+    "bus": {
+      "pub": ["clock/#"],
+      "sub": ["$sys/#", "cmd/clock/#"]
+    },
+    "ui": true
+  }
+}

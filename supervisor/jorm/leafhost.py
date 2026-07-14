@@ -88,6 +88,20 @@ async def _exec(node, sup, store, ws, verb, msg, up_prefix):
         'msg': {'req': req, 'verb': verb, 'guest': gid, 'ok': ok, 'error': err}}))
 
 
+async def _command(node, sup, store, ws, rest, frame, up_prefix):
+    """A cmd/leaf/<name>/<rest> message. `g/<topic>` addresses a hosted GUEST's own bus:
+    republish it locally so a guest here is commanded exactly as one on a full node
+    (cmd/clock/brightness, say) — that is how a leaf's guests stay first-class from the
+    center. Anything else is a lifecycle verb (start/stop/restart/rm/install)."""
+    if rest.startswith('g/'):
+        local = rest[2:]
+        if local:
+            sup.bus.publish(local, frame.get('msg'),
+                            retain=bool(frame.get('retain')), owner='downlink')
+    else:
+        await _exec(node, sup, store, ws, rest, frame.get('msg') or {}, up_prefix)
+
+
 async def _uplink(node, sup):
     from jorm import guests as store
     flagship = node.settings.get('flagship')
@@ -127,8 +141,8 @@ async def _uplink(node, sup):
                 frame = json.loads(await ws.recv())
                 topic = frame.get('topic', '')
                 if topic.startswith(cmd_prefix):
-                    await _exec(node, sup, store, ws, topic[len(cmd_prefix):],
-                                frame.get('msg') or {}, up_prefix)
+                    await _command(node, sup, store, ws, topic[len(cmd_prefix):],
+                                   frame, up_prefix)
         except (OSError, EOFError, ValueError) as e:
             node.log.append('sys', 'leaf-host: uplink down (%s) — retrying' % e)
         finally:
@@ -180,8 +194,7 @@ async def _commands(node, sup, store, ul, cmd_prefix, up_prefix):
             continue
         topic = frame.get('topic', '')
         if topic.startswith(cmd_prefix):
-            await _exec(node, sup, store, ul, topic[len(cmd_prefix):],
-                        frame.get('msg') or {}, up_prefix)
+            await _command(node, sup, store, ul, topic[len(cmd_prefix):], frame, up_prefix)
 
 
 async def _find_gateway(node, link):
@@ -281,6 +294,7 @@ def run_leaf_host(node):
         if not espnow:
             from jorm.netwatch import wifi_watch
             asyncio.create_task(wifi_watch(node))   # re-associate a dropped link
+            asyncio.create_task(sup.ntp())          # wall clock, for guests like the clock
         asyncio.create_task(sup.heartbeat())        # WDT + runaway detection
         asyncio.create_task(sup.telemetry())        # heap/temp on the local bus
         asyncio.create_task(_espnow_uplink(node, sup) if espnow else _uplink(node, sup))
