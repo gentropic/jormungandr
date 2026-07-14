@@ -312,6 +312,9 @@ def run_leaf_host(node):
             asyncio.create_task(sup.ntp())          # wall clock, for guests like the clock
             from jorm.cluster import announce_leaf
             asyncio.create_task(announce_leaf(node))  # beacon presence + door for flagship discovery
+            if node.settings.get('bridge'):
+                from jorm.busbridge import run_uplink   # forward local bus to the flagship over
+                asyncio.create_task(run_uplink(node, sup))  # datagrams (no held uplink)
         asyncio.create_task(sup.heartbeat())        # WDT + runaway detection
         asyncio.create_task(sup.telemetry())        # heap/temp on the local bus
         asyncio.create_task(_espnow_uplink(node, sup) if espnow else _uplink(node, sup))

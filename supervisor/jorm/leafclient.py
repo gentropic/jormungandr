@@ -25,6 +25,21 @@ class DoorError(Exception):
 class LeafClient:
     def __init__(self, token):
         self._seal = Sealer(token)
+        self._tx = None      # lazy reusable send socket for fire-and-forget
+
+    def send(self, host, op, port=PORT, **args):
+        """Fire-and-forget: seal + sendto, no reply awaited — for the bus-bridge, where a lost
+        datagram just means a coalesced value re-sends next tick. Not async: sendto on a UDP
+        socket does not block, so this never parks the loop."""
+        req = {'op': op}
+        req.update(args)
+        blob = self._seal.seal(json.dumps(req).encode())
+        if self._tx is None:
+            self._tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            self._tx.sendto(blob, socket.getaddrinfo(host, port)[0][-1])
+        except OSError:
+            pass
 
     async def _rpc(self, host, req, port, timeout_ms, retries):
         blob = self._seal.seal(json.dumps(req).encode())
