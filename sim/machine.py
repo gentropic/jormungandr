@@ -96,6 +96,26 @@ class ADC:
         return int(30000 + 4000 * math.sin(time.ticks_ms() / 20000))
 
 
+class TouchPad:
+    """A capacitive touch pad — a slow varying reading so a touch guest sees something move."""
+
+    def __init__(self, pin):
+        self._pin = pin
+
+    def read(self):
+        return int(600 + 200 * math.sin(time.ticks_ms() / 3000))
+
+
+class DAC:
+    def __init__(self, pin):
+        self._pin = pin
+        self._v = 0
+
+    def write(self, v):
+        self._v = v & 0xff
+        print('[sim] dac -> %d' % self._v)
+
+
 class I2C:
     def __init__(self, id=0, **kw):
         self._id = id

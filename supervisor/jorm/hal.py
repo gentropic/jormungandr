@@ -7,6 +7,7 @@ attribution evidence (spec §1), so no guest await may bypass it.
 import asyncio
 import json
 import os
+import socket
 import time
 
 import machine
@@ -17,6 +18,19 @@ try:
 except ImportError:                              # supervisor context so hal.matrix() does
     _Matrix = None                               # not trip the guest import guard. Absent
                                                  # on the sim (no framebuf); harmless there.
+
+# Device drivers a guest can lease but never import (the guard blocks it): loaded here in
+# supervisor context, like neopixel. Guarded so a firmware without them still imports hal —
+# hal.dht()/onewire() then raise a clear CapError rather than the supervisor failing to boot.
+try:
+    import dht as _dht
+except ImportError:
+    _dht = None
+try:
+    import onewire as _onewire
+    import ds18x20 as _ds18x20
+except ImportError:
+    _onewire = _ds18x20 = None
 
 from jorm import bus as busmod
 from jorm import clock
@@ -105,6 +119,35 @@ class Hal:
             if e['id'] == id and self._sup.claims.uart_grant(self._guest.id, e['tx']):
                 return UartHandle(id, e['tx'], e['rx'], e.get('baud', 9600))
         raise CapError('uart %d not granted to guest "%s"' % (id, self._guest.id))
+
+    def touch(self, n):
+        if not self._sup.claims.touch_grant(self._guest.id, n):
+            raise CapError('touch on pin %d not granted to guest "%s"' % (n, self._guest.id))
+        return TouchHandle(n)
+
+    def dac(self, n):
+        if not self._sup.claims.dac_grant(self._guest.id, n):
+            raise CapError('dac on pin %d not granted to guest "%s"' % (n, self._guest.id))
+        return DacHandle(n)
+
+    def dht(self, n):
+        if not self._sup.claims.dht_grant(self._guest.id, n):
+            raise CapError('dht on pin %d not granted to guest "%s"' % (n, self._guest.id))
+        if _dht is None:
+            raise CapError('dht driver is not on this firmware')
+        return DhtHandle(n)
+
+    def onewire(self, n):
+        if not self._sup.claims.onewire_grant(self._guest.id, n):
+            raise CapError('onewire on pin %d not granted to guest "%s"' % (n, self._guest.id))
+        if _onewire is None:
+            raise CapError('onewire/ds18x20 driver is not on this firmware')
+        return OneWireHandle(n)
+
+    def udp(self, port=0):
+        if self._caps().get('udp') != {'client': True}:
+            raise CapError('udp not granted to guest "%s"' % self._guest.id)
+        return UdpHandle(self, port)
 
     def rgb(self, n):
         if not self._sup.claims.rgb_grant(self._guest.id, n):
@@ -619,6 +662,86 @@ class UartHandle:
 
     def any(self):
         return self._u.any()
+
+
+class TouchHandle:
+    def __init__(self, n):
+        self._t = machine.TouchPad(machine.Pin(n))
+
+    def read(self):
+        return self._t.read()
+
+
+class DacHandle:
+    def __init__(self, n):
+        self._d = machine.DAC(machine.Pin(n))
+
+    def write(self, value):
+        self._d.write(value & 0xff)      # 8-bit, 0..255
+
+
+class DhtHandle:
+    """A DHT11/DHT22 temp+humidity sensor on one pin. measure(), then read the last sample —
+    the sensor is slow (~2 s between reads), so a guest measures on its own cadence."""
+
+    def __init__(self, n):
+        self._s = _dht.DHT22(machine.Pin(n))
+
+    def measure(self):
+        self._s.measure()
+
+    def temperature(self):
+        return self._s.temperature()
+
+    def humidity(self):
+        return self._s.humidity()
+
+
+class OneWireHandle:
+    """DS18B20-style temperature sensors on a one-wire bus (one pin, many devices): scan() for
+    device ROMs, convert() to trigger a reading, then read_temp(rom) once it has settled."""
+
+    def __init__(self, n):
+        self._ds = _ds18x20.DS18X20(_onewire.OneWire(machine.Pin(n)))
+
+    def scan(self):
+        return self._ds.scan()
+
+    def convert(self):
+        self._ds.convert_temp()
+
+    def read_temp(self, rom):
+        return self._ds.read_temp(rom)
+
+
+class UdpHandle:
+    """Client UDP datagrams (spec §3): the guest sends and receives, but the supervisor owns
+    the socket — a guest cannot import socket (the guard blocks it). recv is non-blocking and
+    yields through the hal, so the watchdog still sees who holds the CPU."""
+
+    def __init__(self, hal, port):
+        self._hal = hal
+        self._s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._s.setblocking(False)
+        if port:
+            self._s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._s.bind(socket.getaddrinfo('0.0.0.0', port)[0][-1])
+
+    def sendto(self, data, host, port):
+        return self._s.sendto(data, socket.getaddrinfo(host, port)[0][-1])
+
+    async def recv(self, timeout_ms=1000, bufsize=512):
+        waited = 0
+        while waited < timeout_ms:
+            try:
+                return self._s.recvfrom(bufsize)     # (data, addr)
+            except OSError:                          # EAGAIN — nothing waiting yet
+                await self._hal.sleep_ms(20)
+                waited += 20
+        return None
+
+    def close(self):
+        self._s.close()
 
 
 class NetResponse:

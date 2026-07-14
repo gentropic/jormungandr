@@ -1,0 +1,12 @@
+{
+  "spec": 0,
+  "id": "probe1w",
+  "name": "One-wire probe",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": {
+    "onewire": [15],
+    "bus": { "pub": ["probe1w/#"] }
+  }
+}

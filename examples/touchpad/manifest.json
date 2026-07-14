@@ -1,0 +1,13 @@
+{
+  "spec": 0,
+  "id": "touchpad",
+  "name": "Touch pad",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": {
+    "touch": [32],
+    "dac": [25],
+    "bus": { "pub": ["touchpad/#"] }
+  }
+}

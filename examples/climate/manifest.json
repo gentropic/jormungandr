@@ -1,0 +1,12 @@
+{
+  "spec": 0,
+  "id": "climate",
+  "name": "Climate",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": {
+    "dht": [4],
+    "bus": { "pub": ["climate/#"] }
+  }
+}

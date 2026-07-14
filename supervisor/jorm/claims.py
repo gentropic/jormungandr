@@ -35,6 +35,8 @@ class Claims:
                 for p in caps.get('pins', [])]
         reqs += [(n, 'pwm', None, None) for n in caps.get('pwm', [])]
         reqs += [(n, 'adc', None, None) for n in caps.get('adc', [])]
+        for cap in ('touch', 'dac', 'dht', 'onewire'):   # each owns its pin outright
+            reqs += [(n, cap, None, None) for n in caps.get(cap, [])]
         reqs += [(e['cs'], 'cs', None, e['bus']) for e in caps.get('spi', [])]
         for e in caps.get('uart', []):     # a uart owns its tx + rx pins outright
             reqs.append((e['tx'], 'uart', None, None))
@@ -125,6 +127,18 @@ class Claims:
 
     def adc_grant(self, guest_id, n):
         return self._pin_mode(guest_id, n, ('adc',))
+
+    def touch_grant(self, guest_id, n):
+        return self._pin_mode(guest_id, n, ('touch',))
+
+    def dac_grant(self, guest_id, n):
+        return self._pin_mode(guest_id, n, ('dac',))
+
+    def dht_grant(self, guest_id, n):
+        return self._pin_mode(guest_id, n, ('dht',))
+
+    def onewire_grant(self, guest_id, n):
+        return self._pin_mode(guest_id, n, ('onewire',))
 
     def rgb_grant(self, guest_id, n):
         return self._pin_mode(guest_id, n, ('rgb',))

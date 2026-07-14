@@ -4,10 +4,12 @@ from jorm.bus import valid_filter
 
 _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 
-KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'uart', 'net', 'ble', 'bus', 'ui',
-              'storage', 'mem_kb', 'usb', 'rgb', 'matrix', 'display')
-SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'uart', 'net', 'bus', 'ui',
-                  'storage', 'mem_kb', 'rgb', 'usb', 'matrix', 'display')  # ble is post-zero
+KNOWN_CAPS = ('pins', 'pwm', 'adc', 'touch', 'dac', 'dht', 'onewire', 'i2c', 'spi', 'uart',
+              'net', 'udp', 'ble', 'bus', 'ui', 'storage', 'mem_kb', 'usb', 'rgb', 'matrix',
+              'display')
+SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'touch', 'dac', 'dht', 'onewire', 'i2c', 'spi', 'uart',
+                  'net', 'udp', 'bus', 'ui', 'storage', 'mem_kb', 'rgb', 'usb', 'matrix',
+                  'display')  # ble is post-zero
 
 
 class ManifestError(Exception):
@@ -78,10 +80,12 @@ def validate(m):
                 and not (isinstance(hid, dict) and 'report_desc' in hid):
             raise ManifestError('caps.usb.hid must be "keyboard", "mouse", '
                                 'or {"report_desc": "file.bin"}')
-    for key in ('pwm', 'adc'):
+    for key in ('pwm', 'adc', 'touch', 'dac', 'dht', 'onewire'):
         if key in caps and not (isinstance(caps[key], list)
                                 and all(isinstance(n, int) for n in caps[key])):
             raise ManifestError('caps.%s must be a list of pin numbers' % key)
+    if 'udp' in caps and caps['udp'] != {'client': True}:
+        raise ManifestError('caps.udp is {"client": true} — bound guest servers are a later cap')
     for e in caps.get('i2c', []):
         if not (isinstance(e, dict) and isinstance(e.get('bus'), int)
                 and isinstance(e.get('addrs'), list)

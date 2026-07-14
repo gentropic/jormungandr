@@ -62,5 +62,18 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer 
 [ "$code" = "409" ] || fail "conflicting uart start returned $code, expected 409 (pin already claimed)"
 pass "pin conflict refused: tx 17 is uartecho's — two guests can't fight over one wire"
 
+echo "== udp: a guest sends + receives datagrams over a supervisor-owned socket"
+$JORM create "$ROOT/examples/udpecho" >/dev/null || fail "install udpecho"
+API -X POST "$JORM_URL/api/guests/udpecho/start" >/dev/null || fail "start udpecho"
+ok=''
+for i in $(seq 1 20); do
+    API "$JORM_URL/api/bus/retained" | python3 -c "
+import json,sys; d=json.load(sys.stdin); x=d.get('udpecho/rx')
+assert x and x['got'] and x['got'].startswith('ping-'), x" 2>/dev/null && { ok=1; break; }
+    sleep 0.5
+done
+[ -n "$ok" ] || fail "udpecho did not receive its datagram"
+pass "udp: guest sent a datagram and received it back (the guest can't import socket)"
+
 echo
-echo "BUS-CAPS acceptance (sim): ALL PASS — i2c + the new uart, pins reserved, no machine import in a guest"
+echo "BUS-CAPS acceptance (sim): ALL PASS — i2c, uart, udp; pins reserved, no machine/socket in a guest"

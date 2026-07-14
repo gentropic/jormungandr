@@ -1,0 +1,12 @@
+{
+  "spec": 0,
+  "id": "udpecho",
+  "name": "UDP echo",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": {
+    "udp": { "client": true },
+    "bus": { "pub": ["udpecho/#"] }
+  }
+}
