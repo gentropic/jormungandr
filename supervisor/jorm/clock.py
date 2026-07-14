@@ -23,29 +23,41 @@ _state = {'synced': False, 'source': None, 'last': 0, 'boot_unix': None}
 _BOOT_TICKS = time.ticks_ms()
 
 
+def _uptime_s():
+    """Whole seconds since boot, as an INTEGER — the arithmetic base for wall time.
+
+    Not float: this port is single-precision (MICROPY_FLOAT_IMPL_FLOAT), where a Unix
+    timestamp (~1.7e9) has a float32 resolution of ~128 s. Computing `boot_unix + mono()`
+    as a float therefore quantises every timestamp to the nearest ~2 minutes — a synced
+    clock that only ticks every couple of minutes. Keeping it integer avoids that entirely.
+    """
+    return time.ticks_diff(time.ticks_ms(), _BOOT_TICKS) // 1000
+
+
 def mono():
-    """Seconds since boot. Always true, needs no clock, and is what everything
-    inside the node records — see to_unix()."""
+    """Seconds since boot as a float — for sub-second stamps only (the log 'up' field).
+    Wall-time math must go through _uptime_s(), not this (see the note there)."""
     return time.ticks_diff(time.ticks_ms(), _BOOT_TICKS) / 1000.0
 
 
 def to_unix(m):
-    """Convert a monotonic stamp to Unix seconds, or None if we cannot yet.
+    """Convert a monotonic stamp to integer Unix seconds, or None if we cannot yet.
 
     This is why the node records monotonic time and converts at the boundary
     rather than stamping wall-clock as it goes: an MCU boots without a clock, so
     lines written before NTP lands would be stamped wrong and *stay* wrong. Learn
-    the offset once, apply it to everything — including the past. A log whose
-    first three lines are fiction is worse than one that admits it has no clock.
+    the offset once, apply it to everything — including the past.
     """
     if _state['boot_unix'] is None:
         return None
-    return _state['boot_unix'] + m
+    return _state['boot_unix'] + int(m)
 
 
 def now():
-    """Wall clock in Unix seconds, or best-effort uptime if never synced."""
-    return to_unix(mono()) or (time.time() + EPOCH_OFFSET)
+    """Wall clock in integer Unix seconds, or best-effort uptime if never synced."""
+    if _state['boot_unix'] is None:
+        return int(time.time()) + EPOCH_OFFSET
+    return _state['boot_unix'] + _uptime_s()
 
 
 def status():
@@ -68,7 +80,7 @@ def sync(log=None, host=None):
         import ntptime
     except ImportError:
         # the sim: the OS clock is already right, and NTP is moot
-        _state['boot_unix'] = time.time() + EPOCH_OFFSET - mono()
+        _state['boot_unix'] = int(time.time()) + EPOCH_OFFSET - _uptime_s()
         _state.update(synced=True, source='host', last=now())
         return True
     # ntptime.settime() is SYNCHRONOUS — it blocks the whole event loop while it waits.
@@ -104,7 +116,7 @@ def set_unix(ts, log=None):
     leaf with no RTC from drifting. The frame carrying `ts` is sealed, so only a
     token-holder can inject one; a replay just re-applies a slightly-stale time that the
     next broadcast corrects."""
-    _state['boot_unix'] = int(ts) - mono()
+    _state['boot_unix'] = int(ts) - _uptime_s()
     _state.update(synced=True, source='cluster', last=now())
     if log:
         log.append('sys', 'clock set from the cluster (%d) — no NTP needed here' % int(ts))
