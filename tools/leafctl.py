@@ -10,6 +10,8 @@ this client speak the same language.
 Ops (slice 1): ping | state | log
 """
 import argparse
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -20,6 +22,7 @@ import sys
 from Crypto.Cipher import AES   # pycryptodome — raw AES-CBC, matching cryptolib on the board
 
 PORT = 5355
+CHUNK = 512                     # bytes per put — leaves margin under a 1472 B WiFi MTU
 
 
 class Sealer:
@@ -65,8 +68,9 @@ class Sealer:
 def main():
     ap = argparse.ArgumentParser(description='sealed-UDP leaf management')
     ap.add_argument('host')
-    ap.add_argument('op', choices=('ping', 'state', 'log', 'start', 'stop', 'restart'))
-    ap.add_argument('guest', nargs='?', help='guest id (for start/stop/restart)')
+    ap.add_argument('op', choices=('ping', 'state', 'log', 'start', 'stop', 'restart', 'install'))
+    ap.add_argument('guest', nargs='?',
+                    help='guest id (start/stop/restart), or local bundle dir (install)')
     ap.add_argument('--token', default=os.environ.get('JORM_TOKEN'))
     ap.add_argument('--port', type=int, default=PORT)
     ap.add_argument('--n', type=int, default=20, help='log: number of lines')
@@ -76,6 +80,74 @@ def main():
         sys.exit('need --token or JORM_TOKEN')
 
     seal = Sealer(a.token)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(a.timeout)
+
+    def rpc(payload, soft=False):
+        s.sendto(seal.seal(json.dumps(payload).encode()), (a.host, a.port))
+        try:
+            data, _ = s.recvfrom(8192)
+        except socket.timeout:
+            if soft:
+                return None
+            sys.exit('no reply from %s:%d (unreachable, or wrong token — sealed drops are silent)'
+                     % (a.host, a.port))
+        pt = seal.unseal(data)
+        if pt is None:
+            if soft:
+                return None
+            sys.exit('reply did not authenticate (wrong token?)')
+        return json.loads(pt)
+
+    def nonce():
+        # single-use, server-issued challenge so a captured mutating datagram can't be replayed
+        nr = rpc({'op': 'nonce'})
+        if not nr.get('nonce'):
+            sys.exit('could not obtain a nonce: %s' % nr)
+        return nr['nonce']
+
+    def upload(local, remote):
+        with open(local, 'rb') as f:
+            data = f.read()
+        crc = binascii.crc32(data) & 0xffffffff
+        total, off = len(data), 0
+        while True:
+            chunk = data[off:off + CHUNK]
+            put = {'op': 'put', 'path': remote, 'off': off, 'total': total,
+                   'data': base64.b64encode(chunk).decode()}
+            if off + len(chunk) >= total:
+                put['crc'] = crc
+            r = None
+            for _ in range(6):                       # retransmit on loss/reorder
+                r = rpc(put, soft=True)
+                if r is not None:
+                    break
+            if r is None:
+                sys.exit('upload of %s stalled at offset %d (no ack)' % (remote, off))
+            if not r.get('ok'):
+                sys.exit('put %s: %s' % (remote, r.get('err')))
+            off = r['next']
+            if r.get('done') or off >= total:
+                break
+
+    if a.op == 'install':
+        bundle = a.guest
+        if not bundle or not os.path.isdir(bundle):
+            sys.exit('install needs a local bundle directory (with manifest.json)')
+        m = json.load(open(os.path.join(bundle, 'manifest.json')))
+        gid = m['id']
+        names = ['manifest.json', m.get('entry', 'main.py')]
+        for name in sorted(os.listdir(bundle)):      # any extra bundle files, not hidden
+            p = os.path.join(bundle, name)
+            if name not in names and os.path.isfile(p) and not name.startswith('.'):
+                names.append(name)
+        for name in names:
+            remote = 'guests/%s/%s' % (gid, name)
+            upload(os.path.join(bundle, name), remote)
+            print('  uploaded %s' % remote, file=sys.stderr)
+        print(json.dumps(rpc({'op': 'install', 'id': gid, 'nonce': nonce()}), indent=2))
+        return
+
     req = {'op': a.op}
     if a.op == 'log':
         req['n'] = a.n
@@ -83,29 +155,7 @@ def main():
         if not a.guest:
             sys.exit('%s needs a guest id' % a.op)
         req['guest'] = a.guest
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.settimeout(a.timeout)
-
-    def rpc(payload):
-        s.sendto(seal.seal(json.dumps(payload).encode()), (a.host, a.port))
-        try:
-            data, _ = s.recvfrom(8192)
-        except socket.timeout:
-            sys.exit('no reply from %s:%d (unreachable, or wrong token — sealed drops are silent)'
-                     % (a.host, a.port))
-        pt = seal.unseal(data)
-        if pt is None:
-            sys.exit('reply did not authenticate (wrong token?)')
-        return json.loads(pt)
-
-    # Mutating ops carry a single-use, server-issued nonce so a captured datagram can't be
-    # replayed. Fetch one first; read ops need none.
-    if a.op in ('start', 'stop', 'restart'):
-        nr = rpc({'op': 'nonce'})
-        if not nr.get('nonce'):
-            sys.exit('could not obtain a nonce: %s' % nr)
-        req['nonce'] = nr['nonce']
+        req['nonce'] = nonce()
     print(json.dumps(rpc(req), indent=2))
 
 

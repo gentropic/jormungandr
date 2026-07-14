@@ -86,6 +86,19 @@ print("replay-guard ok")
 PY
 pass "nonce is single-use: replayed / nonce-less mutating datagrams refused"
 
+echo "== upload + install a guest bundle over sealed UDP (chunked put)"
+$LEAFCTL 127.0.0.1 install "$ROOT/examples/parrot" --token "$JORM_TOKEN" 2>/dev/null | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and d.get('id')=='parrot' and d.get('num'), d" || fail "install parrot over UDP"
+pass "install: parrot bundle chunk-uploaded + registered (num assigned)"
+$LEAFCTL 127.0.0.1 state --token "$JORM_TOKEN" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert any(g['id']=='parrot' for g in d['guests']), d" || fail "parrot not in state after install"
+$LEAFCTL 127.0.0.1 start parrot --token "$JORM_TOKEN" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and d.get('state')=='running', d" || fail "start of installed parrot"
+pass "the UDP-installed guest runs — the bundle round-tripped intact"
+
 echo "== a wrong-token datagram is dropped (no reply)"
 if $LEAFCTL 127.0.0.1 ping --token WRONG-TOKEN --timeout 1.5 >/dev/null 2>&1; then
     fail "a wrong-token datagram got a reply — the seal is not gating"
