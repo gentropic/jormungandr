@@ -38,7 +38,7 @@ sleep 5
 echo "== dirs"
 $MP exec "
 import os
-for d in ('lib', 'lib/microdot', 'jorm', 'guests'):
+for d in ('lib', 'lib/microdot', 'lib/umqtt', 'jorm', 'guests'):
     try: os.mkdir(d)
     except OSError: pass
 "
@@ -50,6 +50,9 @@ for f in "$ROOT"/supervisor/jorm/*.py; do
 done
 for f in "$ROOT"/supervisor/lib/microdot/*.py; do
     $MP cp "$f" ":lib/microdot/$(basename "$f")"
+done
+for f in "$ROOT"/supervisor/lib/umqtt/*.py; do
+    $MP cp "$f" ":lib/umqtt/$(basename "$f")"
 done
 
 echo "== ui (html + a FRESH gz — index() serves ui.html.gz to any gzip client, so a"

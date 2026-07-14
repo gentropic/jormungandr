@@ -193,6 +193,9 @@ async def amain(node, sup, app):
         asyncio.create_task(mgmt_serve(node, sup))
     from jorm.busbridge import run_bridge_server        # push registered leaves their down-topics
     asyncio.create_task(run_bridge_server(node, sup))
+    if node.settings.get('mqtt'):
+        from jorm.mqttbridge import run_mqtt             # bridge the local bus to the fleet MQTT
+        asyncio.create_task(run_mqtt(node, sup))
     await sup.autostart()
     _dnote(node, 'up')          # host owns the panel unless a guest took the focus lease
     node.log.append('sys', 'api listening on :%d' % node.port)

@@ -23,3 +23,4 @@ if not _jorm:
         _jorm = "/mnt/c/Users/endar/Documents/GitHub/jormungandr/supervisor"
 package("jorm", base_path=_jorm)
 package("microdot", base_path=os.path.join(_jorm, "lib"))
+package("umqtt", base_path=os.path.join(_jorm, "lib"))
