@@ -34,7 +34,7 @@ def load_settings():
     return settings
 
 
-def wifi_up(node):
+def wifi_up(node, required=True):
     # The WiFi driver needs a contiguous block for its RX buffers, and on a small
     # node (a C3 with ~170 KB heap) importing the supervisor first can leave too
     # little — "WiFi Out of Memory" at init. Collect before asking for the radio, so
@@ -61,7 +61,10 @@ def wifi_up(node):
     if not wlan.isconnected():
         ssid = node.settings.get('wifi', {}).get('ssid')
         if not ssid:
-            fail('not connected and settings.json has no wifi.ssid')
+            if required:
+                fail('not connected and settings.json has no wifi.ssid')
+            node.wlan = wlan
+            return False
         psk = node.settings.get('wifi', {}).get('psk')
         # Retry the association a few times, each with a fresh down-cycle. A C3's
         # radio can miss the first attempt after a reset (a soft-reboot loop when it
@@ -73,11 +76,9 @@ def wifi_up(node):
                 time.sleep_ms(200)
                 wlan.active(True)
             node.log.append('sys', 'wifi: connecting to %s (try %d)' % (ssid, attempt + 1))
-            # Clear any stuck CONNECTING state before dialling. In a congested band (an
-            # apartment with 30 APs on 2.4 GHz) the driver can wedge mid-association and a
-            # bare connect() then sits at status 1001 forever; an explicit disconnect
-            # resets it where the active() down-cycle above does not. Proven: a WROOM that
-            # reboot-looped on association connected first try once this was added.
+            # Clear any stuck CONNECTING state before dialling: the driver can wedge
+            # mid-association and a bare connect() then sits at status 1001 forever, where
+            # an explicit disconnect resets it and the active() down-cycle above does not.
             try:
                 wlan.disconnect()
             except OSError:
@@ -89,10 +90,20 @@ def wifi_up(node):
             if wlan.isconnected():
                 break
         else:
-            fail('wifi: no connection after 3 tries')
+            if required:
+                fail('wifi: no connection after 3 tries')
+            # A leaf does NOT reboot when WiFi will not come up — that is precisely how a
+            # clock ends up unable to tell the time because the network is flaky. It boots,
+            # runs its guests locally (the panel lights now), and wifi_watch keeps dialling
+            # in the background; NTP and the uplink land whenever the link does.
+            node.log.append('sys', 'wifi: no link after 3 tries — booting anyway, '
+                            'guests run locally and WiFi retries in the background')
+            node.wlan = wlan
+            return False
     node.ip = wlan.ifconfig()[0]
     node.wlan = wlan
     node.log.append('sys', 'wifi up: %s as %s' % (node.ip, node.hostname))
+    return True
 
 
 def radio_for_espnow(node):
@@ -203,14 +214,18 @@ if held():
     print('[sys] the REPL is yours.')
 else:
     node = Node(load_settings())
-    if node.settings.get('transport') == 'espnow':
-        radio_for_espnow(node)   # off-WiFi leaf: radio on the gateway's channel, no assoc
-    else:
-        wifi_up(node)
     # A leaf is a node too small to be a full node (SPEC-two): it runs no IP server,
     # so it never loads the heavy supervisor that would starve its lwIP pool. Branch
     # BEFORE importing any of it — the import is the cost, not just the running.
     role = node.settings.get('role')
+    # A full node NEEDS WiFi (its whole job is to serve), so no link is fatal and it
+    # reboots to retry. A leaf's guests are local-first — the panel, the sensors — so a
+    # flaky link must NOT stop it booting; it comes up and reconnects in the background.
+    leafish = role in ('leaf', 'leaf-host')
+    if node.settings.get('transport') == 'espnow':
+        radio_for_espnow(node)   # off-WiFi leaf: radio on the gateway's channel, no assoc
+    else:
+        wifi_up(node, required=not leafish)
     if role == 'leaf':
         from jorm.leaf import run_leaf
         node.log.append('sys', 'booting as a leaf (no server, no ui)')

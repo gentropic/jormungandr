@@ -35,6 +35,10 @@ async def wifi_watch(node):
             wlan.active(False)
             await asyncio.sleep_ms(200)
             wlan.active(True)
+            try:
+                wlan.disconnect()   # clear a stuck CONNECTING state (as wifi_up does)
+            except OSError:
+                pass
             wlan.connect(ssid, psk)
             for _ in range(60):        # ~12 s, matching the boot window
                 if wlan.isconnected():
