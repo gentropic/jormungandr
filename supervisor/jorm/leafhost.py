@@ -313,6 +313,9 @@ def run_leaf_host(node):
         asyncio.create_task(sup.heartbeat())        # WDT + runaway detection
         asyncio.create_task(sup.telemetry())        # heap/temp on the local bus
         asyncio.create_task(_espnow_uplink(node, sup) if espnow else _uplink(node, sup))
+        if node.settings.get('mgmt', True):
+            from jorm.leafapi import serve as mgmt_serve   # sealed-UDP out-of-band management
+            asyncio.create_task(mgmt_serve(node, sup))
         await sup.autostart()
         if sup.display is not None:
             sup.display.note('up')      # a no-op if a guest (e.g. the clock) took the panel
