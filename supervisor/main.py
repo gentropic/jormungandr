@@ -191,6 +191,8 @@ async def amain(node, sup, app):
     if node.settings.get('mgmt', True):
         from jorm.leafapi import serve as mgmt_serve   # sealed-UDP out-of-band management
         asyncio.create_task(mgmt_serve(node, sup))
+    from jorm.busbridge import run_bridge_server        # push registered leaves their down-topics
+    asyncio.create_task(run_bridge_server(node, sup))
     await sup.autostart()
     _dnote(node, 'up')          # host owns the panel unless a guest took the focus lease
     node.log.append('sys', 'api listening on :%d' % node.port)

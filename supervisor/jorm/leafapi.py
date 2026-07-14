@@ -126,10 +126,22 @@ def _sockaddr(host, port):
     return socket.getaddrinfo(host, port)[0][-1]
 
 
-async def _dispatch(node, sup, req, nonces, uploads):
+async def _dispatch(node, sup, req, nonces, uploads, addr):
     op = req.get('op')
     if op == 'ping':
         return {'ok': True, 'name': node.hostname, 'board': node.board_name(), 'ip': node.ip}
+    if op == 'bsub':
+        # Bus-bridge, flagship side: a leaf registers the topics it wants pushed down, plus the
+        # ip:port of its own door to push to. The leaf self-reports its ip (like the beacon —
+        # the unix port's recvfrom addr is not a dotted string); addr[0] is only a fallback.
+        # Re-sent as a keepalive; reaped on TTL by run_bridge_server. No nonce — it only widens
+        # what THIS leaf hears.
+        import time as _time
+        ip = req.get('ip') or addr[0]
+        topics = [t for t in (req.get('topics') or []) if isinstance(t, str) and not t.startswith('$')]
+        sup.leaf_bridges[ip] = {'topics': topics, 'port': int(req.get('door', PORT)),
+                                'last_ms': _time.ticks_ms()}
+        return {'ok': True, 'subscribed': topics}
     if op == 'state':
         gc.collect()
         return {'ok': True, 'name': node.hostname, 'ip': node.ip,
@@ -223,11 +235,12 @@ async def serve(node, sup):
     seal = Sealer(node.token)
     nonces = []                                  # issued-but-unused single-use challenges
     uploads = {}                                 # path -> in-progress chunked upload
+    port = node.settings.get('mgmt_port', PORT)  # configurable so two sim nodes can coexist
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(_sockaddr('0.0.0.0', PORT))
+    s.bind(_sockaddr('0.0.0.0', port))
     s.settimeout(0)                              # non-blocking: drain then yield, never park
-    node.log.append('sys', 'leaf-mgmt: sealed-UDP management on :%d' % PORT)
+    node.log.append('sys', 'leaf-mgmt: sealed-UDP management on :%d' % port)
     while True:
         drained = 0
         while drained < 16:                      # bound the drain so a flood can't starve us
@@ -244,7 +257,7 @@ async def serve(node, sup):
             except (ValueError, TypeError):
                 continue
             try:
-                reply = await _dispatch(node, sup, req, nonces, uploads)
+                reply = await _dispatch(node, sup, req, nonces, uploads, addr)
             except Exception as e:               # a bad request must not kill the door
                 reply = {'ok': False, 'err': 'dispatch: %s' % e}
             try:

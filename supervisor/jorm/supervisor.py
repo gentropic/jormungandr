@@ -56,6 +56,9 @@ class Supervisor:
         # ages while its server was wedged; loop-liveness isn't service-liveness.
         self._health_fails = 0     # consecutive failed serving probes (0 = healthy)
         self._health_watch = False # true once serving_watch runs; else the gate is inert
+        # Datagram bus-bridge, flagship side: leaves that asked (over the door `bsub` op) to
+        # receive certain bus topics. ip -> {'topics', 'port', 'last_ms'}; reaped on TTL.
+        self.leaf_bridges = {}
         self._rtc = machine.RTC()
         self._i2c = {}
         self._spi = {}
