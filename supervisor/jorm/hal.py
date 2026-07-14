@@ -12,6 +12,12 @@ import time
 import machine
 import neopixel
 
+try:
+    from jorm.max7219 import Matrix as _Matrix   # top-level, like neopixel: imported in
+except ImportError:                              # supervisor context so hal.matrix() does
+    _Matrix = None                               # not trip the guest import guard. Absent
+                                                 # on the sim (no framebuf); harmless there.
+
 from jorm import bus as busmod
 from jorm import clock
 from jorm import guestcfg
@@ -428,10 +434,11 @@ class MatrixHandle:
     text font; a guest brings its own if it wants bigger glyphs (the clock does)."""
 
     def __init__(self, spi_id, sck, mosi, cs, n):
-        from jorm.max7219 import Matrix    # lazy: pulls framebuf only for a matrix guest
+        if _Matrix is None:
+            raise CapError('matrix driver unavailable (no framebuf on this port)')
         spi = machine.SPI(spi_id, baudrate=10_000_000, polarity=0, phase=0,
                           sck=machine.Pin(sck), mosi=machine.Pin(mosi))
-        self._m = Matrix(spi, cs, n)
+        self._m = _Matrix(spi, cs, n)
         self._m.init()
         self.width = self._m.width
         self.height = 8

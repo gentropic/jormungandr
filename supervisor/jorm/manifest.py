@@ -5,9 +5,9 @@ from jorm.bus import valid_filter
 _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 
 KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'ble', 'bus', 'ui',
-              'storage', 'mem_kb', 'usb', 'rgb')
+              'storage', 'mem_kb', 'usb', 'rgb', 'matrix')
 SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'bus', 'ui',
-                  'storage', 'mem_kb', 'rgb', 'usb')  # ble is post-zero
+                  'storage', 'mem_kb', 'rgb', 'usb', 'matrix')  # ble is post-zero
 
 
 class ManifestError(Exception):

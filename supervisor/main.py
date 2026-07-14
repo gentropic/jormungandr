@@ -73,6 +73,15 @@ def wifi_up(node):
                 time.sleep_ms(200)
                 wlan.active(True)
             node.log.append('sys', 'wifi: connecting to %s (try %d)' % (ssid, attempt + 1))
+            # Clear any stuck CONNECTING state before dialling. In a congested band (an
+            # apartment with 30 APs on 2.4 GHz) the driver can wedge mid-association and a
+            # bare connect() then sits at status 1001 forever; an explicit disconnect
+            # resets it where the active() down-cycle above does not. Proven: a WROOM that
+            # reboot-looped on association connected first try once this was added.
+            try:
+                wlan.disconnect()
+            except OSError:
+                pass
             wlan.connect(ssid, psk)
             deadline = time.ticks_add(time.ticks_ms(), 12000)
             while not wlan.isconnected() and time.ticks_diff(deadline, time.ticks_ms()) > 0:
