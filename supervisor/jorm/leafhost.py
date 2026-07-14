@@ -15,6 +15,7 @@ gone. What a smart leaf costs is trust, not memory (mpy soft isolation on one co
 """
 import asyncio
 import json
+import time
 
 from jorm import wsclient
 
@@ -232,6 +233,11 @@ async def _espnow_uplink(node, sup):
                 pass
             await asyncio.sleep_ms(300)
         link.add_peer(gw, ch or 0)
+        # Establish fresh nonces both ways before any data (§6). If it fails — a lost
+        # JOIN/WELCOME on a bad link, or the gateway already gone — scan afresh.
+        if not await link.handshake(gw):
+            node.log.append('sys', 'leaf-host: handshake with gateway failed — re-discovering')
+            continue
         ul = _EspNowUplink(link, gw)
         await ul.send(json.dumps({'op': 'sub', 'filters': [cmd_prefix + '#']}))
         await ul.send(announce)
@@ -240,17 +246,22 @@ async def _espnow_uplink(node, sup):
         pusher = asyncio.create_task(_push(ul, sub, up_prefix))
         cmdr = asyncio.create_task(_commands(node, sup, store, ul, cmd_prefix, up_prefix))
         node.log.append('sys', 'leaf-host: espnow uplink established')
-        misses = 0
+        # Liveness is app-level, not MAC-ACK: with receiver-issued nonces a rebooted
+        # gateway ACKs a stale-nonce frame at the radio and then drops it, so an ACK no
+        # longer proves acceptance. Probe with PING and watch last_rx (a validated PONG
+        # or any down-data refreshes it); ~16 s without one means re-handshake.
         tick = 0
         try:
-            while misses < 3:                      # ~15 s of silence ends the session
+            while True:
                 await asyncio.sleep(5)
-                acked = await ul.send(announce)    # heartbeat + identity refresh
-                misses = 0 if acked else misses + 1
+                await link.send_ping(gw)
                 tick += 1
-                if tick % 4 == 0:                  # ~every 20 s, refresh the guest roster
+                if tick % 4 == 0:                  # ~every 20 s, refresh identity + roster
+                    await ul.send(announce)
                     _roster()
-            node.log.append('sys', 'leaf-host: gateway quiet ~15s — re-discovering')
+                if time.ticks_diff(time.ticks_ms(), link.last_rx) > 16000:
+                    node.log.append('sys', 'leaf-host: gateway quiet ~16s (no pong) — re-discovering')
+                    break
         finally:
             pusher.cancel()
             cmdr.cancel()                          # must stop reading before a re-scan,

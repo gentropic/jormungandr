@@ -3,14 +3,30 @@
 Carries the same JSON bus messages a WiFi leaf sends over a WebSocket, but as sealed,
 fragmented ESP-NOW frames to a peer MAC. A message is:
 
-    seal(counter ‖ text)  →  fragment into ≤240-byte frames  →  asend each, ACK-retried
+    seal(rx_nonce ‖ counter ‖ text)  →  fragment into ≤240-byte frames  →  asend each
 
-and on the way in, reassembled by (peer, msg_id), unsealed (authenticity checked), and
-the per-peer counter checked for replay. Peers are UNENCRYPTED at the ESP-NOW layer —
+reassembled by (peer, msg_id) on the way in, unsealed (authenticity checked), then the
+nonce and counter checked for replay. Peers are UNENCRYPTED at the ESP-NOW layer —
 confidentiality and integrity are the sealer's job (jorm/seal.py), which is how we dodge
 the 6-encrypted-peer cap.
 
-The frame header is 5 bytes: type, msg_id (2, little-endian), fragment index, count.
+**Replay: receiver-issued nonces (§6).** The `rx_nonce` a message carries is not chosen
+by the sender — it is a random nonce the RECEIVER issued during a handshake, and the
+receiver accepts only its current outstanding nonce (plus a counter that must climb).
+That closes cross-session replay: an old session's frames carry a nonce the receiver has
+long since retired, so replaying them — even a whole captured session — is rejected. A
+sender-chosen session id could not do this, because the receiver had no way to tell a
+legitimately-new session from an old one being replayed. The handshake is a three-frame
+JOIN/WELCOME/CONFIRM whose freshness comes from each party echoing a nonce it just
+generated; the seal (the token-derived group key) authenticates every frame, so a
+non-token-holder can neither forge nor complete it.
+
+Because a MAC-layer ACK now means "the radio got it", not "the app accepted it" (a
+rebooted peer ACKs a stale-nonce frame and then drops it), liveness is app-level: a
+PING/PONG pair, and `last_rx`, exactly like the WiFi leaf's keepalive.
+
+The data frame header is 5 bytes: type, msg_id (2, little-endian), fragment index, count.
+Control frames (HELLO/JOIN/WELCOME/CONFIRM/NAK/PING/PONG) are single, unfragmented.
 """
 import asyncio
 import os
@@ -34,6 +50,11 @@ _SEND_TRIES = 4
 T_MSG = 1               # a sealed, possibly-fragmented bus message
 T_HELLO = 2             # discovery (gateway -> broadcast)
 T_NAK = 3               # "resend these fragments of msg_id" (receiver -> sender)
+T_JOIN = 4              # handshake 1 (initiator -> responder): my nonce for YOUR sends
+T_WELCOME = 5           # handshake 2 (responder -> initiator): echo + my nonce for yours
+T_CONFIRM = 6           # handshake 3 (initiator -> responder): echo, activate
+T_PING = 7              # app-level liveness probe
+T_PONG = 8              # app-level liveness reply
 
 _SENT_TTL_MS = 4000     # how long a sender keeps fragments around to answer a NAK
 _NAK_AFTER_MS = 300     # how long a receiver waits for a gap before asking
@@ -46,21 +67,22 @@ class EspNowLink:
         self.e.active(True)
         self._seal = Sealer(token)
         self._next_id = 0
-        self._reasm = {}          # (mac, msg_id) -> {'count','frags','t'}
-        # A per-boot random session id travels (sealed) with every message, ahead of a
-        # per-session counter. Replay protection is "counter must climb WITHIN a
-        # session"; a reboot picks a new session, which the receiver adopts — otherwise
-        # a rebooted leaf (counter back to 1) is rejected forever by the peer's
-        # remembered high-water. Cross-session replay (re-playing a whole old session
-        # after a reboot) is a documented residual — a persistent counter closes it.
-        self._session = os.urandom(4)
-        self._tx_ctr = {}         # mac -> next outbound counter (this session)
-        self._rx = {}             # mac -> (peer session, highest counter seen)
+        self._reasm = {}          # (mac, msg_id) -> {'count','frags','t',...}
+        # Replay state is per peer and per direction. As a SENDER I stamp the nonce the
+        # peer issued to me (_tx_nonce) and climb a counter (_tx_ctr). As a RECEIVER I
+        # issue a nonce (_rx_nonce) and accept only frames carrying it with a counter
+        # above the highest I've seen (_rx_ctr). Both reset at each handshake.
+        self._tx_nonce = {}       # mac -> 4-byte nonce to stamp on data I SEND to mac
+        self._tx_ctr = {}         # mac -> next outbound counter
+        self._rx_nonce = {}       # mac -> 4-byte nonce I issued; data FROM mac must carry it
+        self._rx_ctr = {}         # mac -> highest counter accepted under _rx_nonce
+        self._pending = {}        # mac -> handshake nonce(s) awaiting a CONFIRM/WELCOME
         # Fragment retransmit: a sender keeps a message's frames briefly so it can
         # answer a receiver's NAK ("resend fragment N"); a background loop on the
         # receiver side asks for gaps. Lazily started on first recv().
         self._sent = {}           # (mac, msg_id) -> {'frames': [...], 't'}
         self._nak_task = None
+        self.last_rx = time.ticks_ms()   # app-level liveness: last valid frame in
 
     def mac(self):
         return network.WLAN(network.STA_IF).config('mac')
@@ -129,13 +151,142 @@ class EspNowLink:
                     return bytes(mac), (adv or ch)     # advertised channel wins
         return None, None
 
+    # -- handshake (SPEC-three §6): receiver-issued nonces ------------------
+
+    async def handshake(self, mac, tries=5, timeout=1.0):
+        """Initiator side (a leaf joining its gateway). Establish fresh nonces both ways.
+
+        We pick `na` — the nonce the gateway must stamp on everything it sends US — and
+        send it in a JOIN. The gateway echoes `na` (proving liveness) and adds `nb`, the
+        nonce WE must stamp on everything we send IT; we confirm `nb`. A replayed old
+        WELCOME carries a stale `na` and is ignored, so we only ever accept a WELCOME
+        answering this exact JOIN. Retries a few times: on a lossy link a JOIN or WELCOME
+        can drop, and a fresh JOIN just gets a fresh WELCOME."""
+        key = bytes(mac)
+        for _ in range(tries):
+            na = os.urandom(4)
+            self._pending[key] = na
+            self._rx_nonce[key] = na            # ready to accept na-stamped down-data
+            self._rx_ctr[key] = 0
+            try:
+                await self.e.asend(mac, bytes([T_JOIN]) + self._seal.seal(na), True)
+            except OSError:
+                pass
+            end = time.ticks_add(time.ticks_ms(), int(timeout * 1000))
+            while time.ticks_diff(end, time.ticks_ms()) > 0:
+                try:
+                    m, frame = await asyncio.wait_for(self.e.arecv(), timeout)
+                except Exception:
+                    break
+                if bytes(m) != key or not frame or frame[0] != T_WELCOME:
+                    continue
+                pt = self._seal.unseal(frame[1:])
+                if pt is None or len(pt) < 8 or pt[:4] != na:
+                    continue                    # forged, or a replayed stale WELCOME
+                nb = pt[4:8]
+                self._tx_nonce[key] = nb
+                self._tx_ctr[key] = 1
+                try:
+                    await self.e.asend(mac, bytes([T_CONFIRM]) + self._seal.seal(nb), True)
+                except OSError:
+                    pass
+                self._pending.pop(key, None)
+                self.last_rx = time.ticks_ms()
+                return True
+        return False
+
+    async def _on_join(self, mac, frame):
+        """Responder side: a peer offered `na`. Issue `nb`, echo, wait for CONFIRM.
+
+        We change no live state here — only stash (na, nb) as pending. A replayed old
+        JOIN thus costs one WELCOME and nothing more: it cannot flip our nonces without a
+        CONFIRM, which a non-token-holder cannot seal."""
+        pt = self._seal.unseal(frame[1:])
+        if pt is None or len(pt) < 4:
+            return
+        na = pt[:4]
+        self.add_peer(mac)                      # so we can answer
+        nb = os.urandom(4)
+        self._pending[bytes(mac)] = (na, nb)
+        try:
+            await self.e.asend(mac, bytes([T_WELCOME]) + self._seal.seal(na + nb), True)
+        except OSError:
+            pass
+
+    def _on_confirm(self, mac, frame):
+        """Responder side: the CONFIRM echoes the `nb` we issued — now activate both
+        directions atomically (stamp `na` on our sends, accept `nb` on theirs)."""
+        pt = self._seal.unseal(frame[1:])
+        if pt is None or len(pt) < 4:
+            return
+        key = bytes(mac)
+        pend = self._pending.get(key)
+        if not isinstance(pend, tuple) or pend[1] != pt[:4]:
+            return
+        na, nb = pend
+        self._tx_nonce[key] = na
+        self._tx_ctr[key] = 1
+        self._rx_nonce[key] = nb
+        self._rx_ctr[key] = 0
+        self._pending.pop(key, None)
+        self.last_rx = time.ticks_ms()
+
+    # -- liveness (app-level, because a MAC ACK no longer means "accepted") -
+
+    async def send_ping(self, mac):
+        """Provoke a PONG. Stamped like data, so a rebooted peer that has forgotten our
+        nonce drops it silently — no PONG — and the sender's `last_rx` goes stale."""
+        await self._send_stamped(mac, T_PING)
+
+    async def _on_ping(self, mac, frame):
+        if self._check_stamped(mac, frame[1:]) is None:
+            return                              # stale/forged: no PONG, they re-handshake
+        await self._send_stamped(mac, T_PONG)
+
+    def _on_pong(self, mac, frame):
+        self._check_stamped(mac, frame[1:])     # updates last_rx iff it validates
+
+    async def _send_stamped(self, mac, kind):
+        key = bytes(mac)
+        nonce = self._tx_nonce.get(key)
+        if nonce is None:
+            return
+        ctr = self._tx_ctr.get(key, 1)
+        self._tx_ctr[key] = ctr + 1
+        body = self._seal.seal(nonce + ctr.to_bytes(8, 'big'))
+        try:
+            await self.e.asend(mac, bytes([kind]) + body, True)
+        except OSError:
+            pass
+
+    def _check_stamped(self, mac, blob):
+        """Validate a single-frame stamped control body against the receiver state;
+        returns the trailing payload (may be b'') if fresh, else None. Updates last_rx."""
+        pt = self._seal.unseal(blob)
+        if pt is None or len(pt) < 12:
+            return None
+        m = bytes(mac)
+        if self._rx_nonce.get(m) != pt[:4]:
+            return None
+        ctr = int.from_bytes(pt[4:12], 'big')
+        if ctr <= self._rx_ctr.get(m, 0):
+            return None
+        self._rx_ctr[m] = ctr
+        self.last_rx = time.ticks_ms()
+        return pt[12:]
+
     # -- send ---------------------------------------------------------------
 
     async def send(self, mac, text):
-        """Seal, fragment, and send. Returns True only if every frame was ACKed."""
-        ctr = self._tx_ctr.get(mac, 1)
-        self._tx_ctr[mac] = ctr + 1
-        blob = self._seal.seal(self._session + ctr.to_bytes(8, 'big') + text.encode())
+        """Seal, fragment, and send. Returns True only if every frame was ACKed; False
+        (sending nothing) if we have no nonce for this peer yet — the caller re-joins."""
+        key = bytes(mac)
+        nonce = self._tx_nonce.get(key)
+        if nonce is None:
+            return False
+        ctr = self._tx_ctr.get(key, 1)
+        self._tx_ctr[key] = ctr + 1
+        blob = self._seal.seal(nonce + ctr.to_bytes(8, 'big') + text.encode())
         count = (len(blob) + _MAXFRAG - 1) // _MAXFRAG
         mid = self._next_id & 0xFFFF
         self._next_id += 1
@@ -144,7 +295,7 @@ class EspNowLink:
         # Keep the frames so a NAK can pull single fragments back (only worth it for a
         # multi-frame message; a single frame either ACKs here or is lost outright).
         if count > 1:
-            self._sent[(bytes(mac), mid)] = {'frames': frames, 't': time.ticks_ms()}
+            self._sent[(key, mid)] = {'frames': frames, 't': time.ticks_ms()}
             self._reap()
         all_acked = True
         for frame in frames:
@@ -164,17 +315,34 @@ class EspNowLink:
     # -- receive ------------------------------------------------------------
 
     async def recv(self):
-        """Await the next complete, authentic, non-replayed message: (mac, text)."""
+        """Await the next complete, authentic, non-replayed DATA message: (mac, text).
+
+        Control frames (handshake, liveness, NAK) are handled inline and never returned."""
         if self._nak_task is None:
             self._nak_task = asyncio.create_task(self._nak_loop())
         while True:
             mac, frame = await self.e.arecv()
-            if not frame or len(frame) < 2:
+            if not frame:
                 continue
-            if frame[0] == T_NAK:
+            t = frame[0]
+            if t == T_NAK:
                 await self._answer_nak(bytes(mac), frame)
                 continue
-            if len(frame) < _HDR or frame[0] != T_MSG:
+            if t == T_JOIN:
+                await self._on_join(mac, frame)
+                continue
+            if t == T_CONFIRM:
+                self._on_confirm(mac, frame)
+                continue
+            if t == T_PING:
+                await self._on_ping(mac, frame)
+                continue
+            if t == T_PONG:
+                self._on_pong(mac, frame)
+                continue
+            if t == T_WELCOME:
+                continue                        # only meaningful inside handshake()
+            if len(frame) < _HDR or t != T_MSG:
                 continue
             mid = frame[1] | (frame[2] << 8)
             idx, count = frame[3], frame[4]
@@ -198,12 +366,13 @@ class EspNowLink:
             if pt is None or len(pt) < 12:
                 continue          # forged, corrupt, or too short — drop silently
             m = bytes(mac)
-            session, ctr = pt[:4], int.from_bytes(pt[4:12], 'big')
-            prev = self._rx.get(m)
-            if prev is not None and prev[0] == session and ctr <= prev[1]:
-                continue          # replay/reorder within a session — drop
-            # a new session (peer rebooted) or a higher counter: accept and record
-            self._rx[m] = (session, ctr)
+            nonce, ctr = pt[:4], int.from_bytes(pt[4:12], 'big')
+            if self._rx_nonce.get(m) != nonce:
+                continue          # stale session (retired nonce) or never established
+            if ctr <= self._rx_ctr.get(m, 0):
+                continue          # replay/reorder within the session — drop
+            self._rx_ctr[m] = ctr
+            self.last_rx = time.ticks_ms()
             return m, pt[12:].decode()
 
     # -- fragment retransmit ------------------------------------------------

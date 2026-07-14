@@ -215,5 +215,28 @@ logged `gateway quiet ~15s — re-discovering`, scanned, re-locked to channel 11
 c510 returned, and the whole roster (announce, both guest states, `pinger` streaming)
 reappeared on the bus with no touch to the leaf.
 
-**Not yet built:** cross-session replay hardening (a persistent counter), multi-hop
-relay, and BLE.
+**Cross-session replay hardening (§6): built and proven off-radio.** The replay defence
+no longer lets the *sender* pick its session id (which the receiver had to accept blind,
+the whole hole). Instead the **receiver issues a nonce** in a three-frame handshake —
+JOIN (`na`, the nonce the gateway must stamp on its sends) / WELCOME (echo `na` + `nb`,
+the nonce the leaf must stamp) / CONFIRM (`nb`) — and thereafter accepts only frames
+carrying its current nonce with a climbing counter. A whole captured session, replayed
+after either side re-handshakes, carries a retired nonce and is rejected. The handshake
+is fresh because each party echoes a nonce it just generated, and the seal (group key)
+authenticates every frame, so a non-token-holder can neither forge nor complete it.
+
+This forced a second change: a MAC-layer ACK no longer means "accepted" (a rebooted
+gateway ACKs a stale-nonce frame at the radio, then drops it), so the leaf's keepalive
+went from ACK-watching to **app-level PING/PONG + `last_rx`** — the same liveness the
+WiFi leaf uses. `tools/frag_test.py` grew to 14 checks (the handshake, plus an in-session
+replay and a whole-session-after-re-handshake replay both rejected). Proven on silicon:
+rebooting the gateway made the leaf log `gateway quiet ~16s (no pong) — re-discovering`,
+re-handshake with a fresh nonce, and bring the whole roster back — the exact nonce-loss
+case ACK-watching would have missed.
+
+The sender-chosen session id (and its per-boot randomness) is gone; the nonce subsumes it.
+
+**Not yet built:** for a future deep-sleep battery dumb-leaf that can't hold a handshake
+across sleep, a "cryptographic battery" — the flagship tops up a supply of receiver-issued
+nonces during a rendezvous and the leaf spends one per wake, no round-trip. Also:
+multi-hop relay and BLE.
