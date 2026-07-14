@@ -1,11 +1,11 @@
 # The clock, as a guest (not a special leaf — the whole point).
 #
-# Renders a large HH:MM:SS with a decisecond bar to an 8x32 panel it holds through the
-# `matrix` cap, exactly the way `beacon` holds its LED: the supervisor owns the wire, the
-# guest gets a surface. Time comes from hal.time() — the node's own NTP-synced clock, so
+# Renders a large HH:MM:SS to an 8x32 panel it leases through the `display` cap: the host
+# owns the wire and a status console, and the clock holds the focus lease while it runs
+# (SPEC-two §8, revised). Time comes from hal.time() — the node's own NTP-synced clock, so
 # there is no NTP in here. Messages, a persistent banner, and brightness arrive over the
-# bus (cmd/clock/#); brightness is also live guest config. Stop the guest and the panel
-# goes dark — it does not sit there lying.
+# bus (cmd/clock/#); brightness is also live guest config. Stop the guest and the host
+# reclaims the panel for status — it does not sit there dark or lying.
 
 # 4-wide, 7-tall clock digits + a 1-wide colon.
 _G = {
@@ -39,7 +39,7 @@ async def run(hal):
          'min': 0, 'max': 15, 'step': 1},
     ])
 
-    panel = hal.matrix()
+    panel = hal.display()   # host-owned panel; the clock holds the focus lease while it runs
     st = {'bright': int(hal.config.get('brightness', 3)),
           'night': int(hal.config.get('night', 1)),
           'tz': int(hal.config.get('tz', -3)),

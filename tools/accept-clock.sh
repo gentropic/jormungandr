@@ -25,7 +25,15 @@ if [ -n "${NODE:-}" ]; then
     echo "== target: $JORM_URL (real node)"
     trap 'rm -rf "$TMP"' EXIT
 else
-    rm -rf "$ROOT/sim/fs/guests"
+    # The clock leases the host-owned display, so the sim node needs a display in its
+    # inventory (a bare sim has none). Isolate it in a temp flash via SIM_FS.
+    export SIM_FS="$TMP/fs"
+    mkdir -p "$SIM_FS"
+    cat > "$SIM_FS/settings.json" <<'JSON'
+{"token": "dev-token", "port": 8000, "hostname": "jorm-sim",
+ "displays": [{"id": "primary", "kind": "max7219", "spi": 1,
+               "sck": 25, "mosi": 32, "cs": 33, "n": 4}]}
+JSON
     "$ROOT/sim/run.sh" >"$SIMLOG" 2>&1 &
     SIM=$!
     trap 'kill $SIM 2>/dev/null || true; rm -rf "$TMP"' EXIT
@@ -37,11 +45,11 @@ for i in $(seq 1 50); do
     sleep 0.2
 done
 
-echo "== the clock guest installs (matrix cap survives manifest validation)"
+echo "== the clock guest installs (display cap survives manifest validation)"
 $JORM create "$ROOT/examples/clock" >/dev/null || fail "create clock refused (unknown/rejected cap?)"
-pass "installed — matrix is a known, supported cap"
+pass "installed — display is a known, supported cap"
 
-echo "== it starts and stays running (hal.matrix past the import guard; panel/config ok)"
+echo "== it starts and stays running (hal.display past the import guard; panel/config ok)"
 $JORM start clock >/dev/null || true
 sleep 2
 api /api/guests/clock | python3 -c "
@@ -52,7 +60,16 @@ if d['state'] != 'running':
     if d.get('traceback'): print(d['traceback'])
     sys.exit(1)
 " || fail "clock guest did not stay running (cap/guard/panel/config crash)"
-pass "running — hal.matrix() granted and constructed, render loop alive"
+pass "running — hal.display() leased the panel, render loop alive"
+
+echo "== it holds the display focus lease (the host handed it the panel)"
+api /api/bus/retained | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+disp = d.get('\$sys/display', {})
+assert disp.get('owner') == 'clock', 'display owner is %r, want clock' % (disp.get('owner'),)
+" || fail "clock did not take the display focus lease"
+pass "clock owns \$sys/display — the host leased it the panel"
 
 echo "== it declared its panel + config and publishes clock/state"
 r="$(api /api/bus/retained)"

@@ -8,7 +8,7 @@
   "autostart": true,
   "restart": "on-crash",
   "caps": {
-    "matrix": {"sck": 25, "mosi": 32, "cs": 33, "n": 4},
+    "display": true,
     "bus": {
       "pub": ["clock/#"],
       "sub": ["$sys/#", "cmd/clock/#"]
