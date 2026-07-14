@@ -248,6 +248,11 @@ async def _espnow_uplink(node, sup):
         node.log.append('sys', 'leaf-host: gateway %s%s'
                         % (':'.join('%02x' % b for b in gw),
                            '' if ch is None else ' on ch %d' % ch))
+        # Hand the WiFi driver room before touching the radio: on a small node the
+        # leaf-host plus a busy guest fragment the heap, and channel-set / send then fail
+        # with "WiFi Out of Memory" — which quietly broke the handshake here.
+        import gc
+        gc.collect()
         if ch is not None:
             try:
                 node.wlan.config(channel=ch)      # pin it; the scan left the radio hopping
@@ -257,6 +262,7 @@ async def _espnow_uplink(node, sup):
         link.add_peer(gw, ch or 0)
         # Establish fresh nonces both ways before any data (§6). If it fails — a lost
         # JOIN/WELCOME on a bad link, or the gateway already gone — scan afresh.
+        gc.collect()
         if not await link.handshake(gw):
             node.log.append('sys', 'leaf-host: handshake with gateway failed — re-discovering')
             continue
@@ -308,6 +314,8 @@ def run_leaf_host(node):
         asyncio.create_task(sup.telemetry())        # heap/temp on the local bus
         asyncio.create_task(_espnow_uplink(node, sup) if espnow else _uplink(node, sup))
         await sup.autostart()
+        if sup.display is not None:
+            sup.display.note('up')      # a no-op if a guest (e.g. the clock) took the panel
         node.log.append('sys', 'leaf-host: %d guest(s) installed, hosting locally'
                         % len(sup.guests))
         while True:

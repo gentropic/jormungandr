@@ -10,7 +10,7 @@ import time
 
 from jorm import guestcfg
 from jorm import usb
-from jorm.claims import ClaimError
+from jorm.claims import ClaimError, display_id
 from jorm.fsutil import UnsafePath, ensure_dir, rmtree, safe_name, write_atomic
 from jorm.hal import Hal
 from jorm.manifest import validate, ManifestError
@@ -203,6 +203,12 @@ class Guest:
         self.set_state('running')
         self.console.append('sys', 'running')
         self.task = asyncio.create_task(self._runner(run))
+        caps = self.manifest.get('caps', {})
+        if self.sup.display is not None and 'display' in caps:
+            self.sup.display.acquire(self.id)   # this guest now draws; the console stands back
+            self.sup.sys_publish('$sys/display',
+                                 {'display': display_id(caps['display']), 'owner': self.id},
+                                 retain=True)
         return self.state
 
     async def _runner(self, run):
@@ -238,6 +244,15 @@ class Guest:
             self.cfg_watchers = []
             self.stdin = []
             self.sup.claims.release(self.id)
+            if self.sup.display is not None and self.sup.display.release(self.id):
+                # this guest was drawing; the host reclaims the panel and says so
+                con = self.sup.display.console
+                if con is not None:
+                    con.down(self.id)
+                self.sup.sys_publish(
+                    '$sys/display',
+                    {'display': self.sup.display.primary_id, 'owner': 'host',
+                     'status': con.last if con is not None else None}, retain=True)
             self.status = ''
 
     async def stop(self, grace_ms=2000):

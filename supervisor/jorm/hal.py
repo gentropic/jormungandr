@@ -21,6 +21,7 @@ except ImportError:                              # supervisor context so hal.mat
 from jorm import bus as busmod
 from jorm import clock
 from jorm import guestcfg
+from jorm.claims import display_id   # top-level: display() must not import in guest context
 from jorm.fsutil import UnsafePath, ensure_dir, safe_relpath, tree_size
 from jorm.panels import validate_panel
 from jorm.ring import Tap
@@ -113,6 +114,22 @@ class Hal:
         if not mx or not self._sup.claims.matrix_grant(self._guest.id, mx.get('cs')):
             raise CapError('matrix not granted to guest "%s"' % self._guest.id)
         return MatrixHandle(mx.get('spi', 1), mx['sck'], mx['mosi'], mx['cs'], mx.get('n', 4))
+
+    def display(self, id=None):
+        """hal.display — a focus-gated surface on a display the HOST owns (SPEC-two §8,
+        revised). The guest draws while it holds the lease; its show() only reaches the
+        glass while focused, so the host can reclaim the panel for status when the guest
+        is gone. Same surface API as the matrix cap; the wire is the supervisor's."""
+        cap = self._caps().get('display')
+        if cap is None:
+            raise CapError('display not granted to guest "%s"' % self._guest.id)
+        did = id or display_id(cap)
+        mgr = self._sup.display
+        if mgr is None or mgr.get(did) is None:
+            raise CapError('no display "%s" on this node' % did)
+        if not self._sup.claims.display_grant(self._guest.id, did):
+            raise CapError('display "%s" not granted to guest "%s"' % (did, self._guest.id))
+        return DisplayHandle(mgr, mgr.get(did), self._guest.id)
 
     def usb(self):
         """hal.usb — the guest's own granted USB interface, and only its own.
@@ -470,6 +487,53 @@ class MatrixHandle:
     def off(self):
         self._m.fb.fill(0)
         self._m.show()
+
+
+class DisplayHandle:
+    """A guest's surface on a host-owned display. Drawing goes straight to the shared
+    framebuffer, but show()/off()/brightness() are gated on holding the focus lease: an
+    unfocused guest cannot push to the glass or dim it out from under the host console.
+    The host clears the buffer when it reclaims, so a stale guest frame never lingers."""
+
+    def __init__(self, mgr, display, gid):
+        self._mgr = mgr
+        self._d = display
+        self._gid = gid
+        self.width = display.width
+        self.height = display.height
+
+    def _own(self):
+        return self._mgr.owns(self._gid)
+
+    def fill(self, v=0):
+        self._d.fill(v)
+
+    def pixel(self, x, y, v=1):
+        self._d.pixel(x, y, v)
+
+    def text(self, s, x=0, y=0, v=1):
+        self._d.text(s, x, y, v)
+
+    def hline(self, x, y, w, v=1):
+        self._d.hline(x, y, w, v)
+
+    def rect(self, x, y, w, h, v=1, fill=False):
+        self._d.rect(x, y, w, h, v, fill)
+
+    def scroll(self, dx, dy):
+        self._d.scroll(dx, dy)
+
+    def brightness(self, level):
+        if self._own():
+            self._d.brightness(level)
+
+    def show(self):
+        if self._own():
+            self._d.show()
+
+    def off(self):
+        if self._own():
+            self._d.off()
 
 
 class AdcHandle:

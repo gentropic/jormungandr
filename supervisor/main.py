@@ -34,6 +34,17 @@ def load_settings():
     return settings
 
 
+def _dnote(node, text):
+    """Narrate a boot phase on the host display, if this node has one. Safe before the
+    supervisor exists — the display is built the moment the node is (see the boot block)."""
+    d = getattr(node, 'display', None)
+    if d is not None:
+        try:
+            d.note(text)
+        except Exception:
+            pass          # a status line must never be able to stop the boot
+
+
 def wifi_up(node, required=True):
     # The WiFi driver needs a contiguous block for its RX buffers, and on a small
     # node (a C3 with ~170 KB heap) importing the supervisor first can leave too
@@ -70,6 +81,7 @@ def wifi_up(node, required=True):
         # radio can miss the first attempt after a reset (a soft-reboot loop when it
         # only tried once), so give it three ~12 s windows before giving up rather
         # than one 15 s window. On a healthy link the first attempt connects at once.
+        _dnote(node, 'wifi')
         for attempt in range(3):
             if attempt:
                 wlan.active(False)
@@ -96,6 +108,7 @@ def wifi_up(node, required=True):
             # clock ends up unable to tell the time because the network is flaky. It boots,
             # runs its guests locally (the panel lights now), and wifi_watch keeps dialling
             # in the background; NTP and the uplink land whenever the link does.
+            _dnote(node, 'no net')
             node.log.append('sys', 'wifi: no link after 3 tries — booting anyway, '
                             'guests run locally and WiFi retries in the background')
             node.wlan = wlan
@@ -122,6 +135,7 @@ def radio_for_espnow(node):
     mac = wlan.config('mac')
     node.mac4 = '%02x%02x' % (mac[-2], mac[-1])
     node.wlan = wlan
+    _dnote(node, 'e-now')
     ch = node.settings.get('gateway_channel')
     if ch is not None:
         try:
@@ -174,6 +188,7 @@ async def amain(node, sup, app):
     asyncio.create_task(sup.bridge.run())         # pull peers' bus slices (one §4)
     asyncio.create_task(confirm_trial(node))
     await sup.autostart()
+    _dnote(node, 'up')          # host owns the panel unless a guest took the focus lease
     node.log.append('sys', 'api listening on :%d' % node.port)
     await app.start_server(host='0.0.0.0', port=node.port)
 
@@ -214,6 +229,18 @@ if held():
     print('[sys] the REPL is yours.')
 else:
     node = Node(load_settings())
+    # Host display, built the instant the node is — before wifi, before the supervisor —
+    # so the panel can narrate the boot (two §8, revised) instead of sitting dark. Reused
+    # by the supervisor later. A node with no `displays` inventory simply has none.
+    node.display = None
+    _dspecs = node.settings.get('displays')
+    if _dspecs:
+        try:
+            from jorm.display import DisplayManager
+            node.display = DisplayManager(_dspecs)
+            node.display.note('boot')
+        except Exception as _e:
+            node.log.append('sys', 'display: init failed — %s' % _e)
     # A leaf is a node too small to be a full node (SPEC-two): it runs no IP server,
     # so it never loads the heavy supervisor that would starve its lwIP pool. Branch
     # BEFORE importing any of it — the import is the cost, not just the running.

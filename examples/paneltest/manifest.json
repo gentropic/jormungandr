@@ -1,0 +1,14 @@
+{
+  "spec": 0,
+  "id": "paneltest",
+  "name": "Panel Test",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "autostart": false,
+  "restart": "never",
+  "caps": {
+    "display": true,
+    "bus": {"pub": ["paneltest/#"]}
+  }
+}

@@ -12,11 +12,20 @@ class ClaimError(Exception):
     pass
 
 
+def display_id(cap):
+    """The display a `display` cap asks focus on: `true` -> 'primary', or its 'id'."""
+    if cap is True or cap is None:
+        return 'primary'
+    return cap.get('id', 'primary')
+
+
 class Claims:
     def __init__(self, reserved_pins=()):
         self.reserved = set(reserved_pins)
         self._pins = {}  # pin -> {'mode', 'pull', 'owners': [guest ids], 'bus': spi bus for cs}
         self._i2c = {}   # (bus, addr) -> guest id
+        self._focus = {}  # display id -> guest id (single holder: the host owns the wire,
+        #                   a guest holds the *lease* to draw). No pins: they are the host's.
 
     # -- grant / release -----------------------------------------------------
 
@@ -68,6 +77,11 @@ class Claims:
             if owner:
                 raise ClaimError('i2c %d/0x%02x already passed through to guest "%s"'
                                  % (bus, addr, owner))
+        disp = display_id(caps['display']) if 'display' in caps else None
+        if disp is not None:
+            held = self._focus.get(disp)
+            if held is not None and held != guest_id:
+                raise ClaimError('display "%s" is already held by guest "%s"' % (disp, held))
 
         for n, mode, pull, spi_bus in pin_reqs:
             entry = self._pins.setdefault(
@@ -75,6 +89,8 @@ class Claims:
             entry['owners'].append(guest_id)
         for bus, addr in i2c_reqs:
             self._i2c[(bus, addr)] = guest_id
+        if disp is not None:
+            self._focus[disp] = guest_id
 
     def release(self, guest_id):
         for n in list(self._pins):
@@ -86,6 +102,9 @@ class Claims:
         for key in list(self._i2c):
             if self._i2c[key] == guest_id:
                 del self._i2c[key]
+        for did in list(self._focus):
+            if self._focus[did] == guest_id:
+                del self._focus[did]
 
     # -- hal-side checks -----------------------------------------------------
 
@@ -109,6 +128,9 @@ class Claims:
 
     def matrix_grant(self, guest_id, cs):
         return self._pin_mode(guest_id, cs, ('matrix',))
+
+    def display_grant(self, guest_id, disp='primary'):
+        return self._focus.get(disp) == guest_id
 
     def spi_grant(self, guest_id, bus, cs):
         entry = self._pin_mode(guest_id, cs, ('cs',))

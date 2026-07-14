@@ -55,6 +55,26 @@ class Supervisor:
         self.cluster = Discovery(node)
         # Bus bridging (one §4): pull a declared slice of each peer's bus into ours.
         self.bridge = BridgeManager(self)
+        # Host-owned displays (two §8, revised): the supervisor owns the panel and runs a
+        # status console on it, leasing focus to a guest. Built early in boot (main.py) so
+        # it can narrate wifi/ntp before the supervisor exists; reused here. Absent on a
+        # node with no panel.
+        self.display = getattr(node, 'display', None)
+        if self.display is None:
+            specs = node.settings.get('displays')
+            if specs:
+                try:
+                    from jorm.display import DisplayManager
+                    self.display = DisplayManager(specs)
+                except Exception as e:
+                    node.log.append('sys', 'display: init failed — %s' % e)
+        if self.display is not None:
+            self.display.on_note = self._note_pub
+
+    def _note_pub(self, text):
+        self.sys_publish('$sys/display',
+                         {'display': self.display.primary_id, 'owner': 'host', 'status': text},
+                         retain=True)
 
     def i2c(self, bus):
         """The supervisor owns the bus object; guests get address-scoped handles."""
@@ -98,7 +118,11 @@ class Supervisor:
         so in /api/node rather than quietly serving 1970 to every console pane."""
         tries = 0
         while True:
+            if self.display is not None and not clock.status()['synced']:
+                self.display.note('ntp')     # narrate the sync attempt while unsynced
             if clock.sync(self.node.log, self.node.settings.get('ntp_host')):
+                if self.display is not None:
+                    self.display.note('up')  # clock set — leave 'ntp' behind
                 await asyncio.sleep(86400)   # daily, per spec §4
                 tries = 0
             else:
