@@ -236,6 +236,16 @@ case ACK-watching would have missed.
 
 The sender-chosen session id (and its per-boot randomness) is gone; the nonce subsumes it.
 
+**UI representation (§7): built and proven.** An ESP-NOW leaf now renders in the tree
+*under* the node that is its gateway — a `◎` branch tagged with its transport, a
+running/total count, and its own guests one level deeper, opening and closing like any
+other. It reads purely from the retained bus a gateway already carries (`$sys/leaf/<name>`
+for the leaf, `leaf/<name>/guest/<id>` for its guests), so it appears only on the
+gateway's own UI and not when you hop to a peer — which is exactly the leaf's place in
+the topology. Live: a leaf guest's state change moves its glyph and count, and clearing
+the announce removes the branch. A guest-state CLEAR deliberately does *not* conjure a
+phantom leaf. `tools/verify-ui.mjs` grew five checks for it (a full run is 64, all green).
+
 **Not yet built:** for a future deep-sleep battery dumb-leaf that can't hold a handshake
 across sleep, a "cryptographic battery" — the flagship tops up a supply of receiver-issued
 nonces during a rendezvous and the leaf spends one per wake, no round-trip. Also:

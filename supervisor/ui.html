@@ -108,6 +108,12 @@ body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 va
 .trow.root { padding-left:.45rem; font-weight:700; }
 .trow.grp  { padding-left:1.35rem; }
 .trow.g    { padding-left:2.9rem; }
+/* a leaf hangs off this node (its gateway); it sits alongside the node's own guests
+   and opens to show its own, one step deeper (three §7). */
+.trow.leaf { padding-left:2.9rem; }
+.trow.lg   { padding-left:4.1rem; }
+.trow .xfer { font-size:.58rem; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--au-fg-soft); margin-left:.35rem; }
 .tw { width:.9em; display:inline-block; text-align:center; color:var(--au-fg-soft); }
 .tnum { color:var(--au-fg-soft); margin-right:.15rem; }
 .trename { font:400 .78rem var(--au-font-mono); color:var(--au-fg);
@@ -460,6 +466,7 @@ const S = {
   clockOk: true, temp: null, drops: 0, watchers: [],
   open: { dc: true, node: true }, renaming: false,
   peers: [], clusterName: null,    // the rest of the cluster (one §1)
+  leaves: {},                      // ESP-NOW leaves this node is gateway for (three §7)
 };
 try {
   S.token = localStorage.getItem('jorm.token') || '';
@@ -743,7 +750,7 @@ function matchTopic(filter, topic) {
 }
 
 function currentScope() {
-  const filters = ['$sys/#', '$ui/#'];
+  const filters = ['$sys/#', '$ui/#', 'leaf/#'];   // leaf/# carries ESP-NOW leaf states
   if (S.sel === null && S.tabNode === 'bus') filters.push('#');
   for (const t of Object.keys(S.bindWatch)) filters.push(t);
   return filters;
@@ -813,6 +820,27 @@ function route(topic, msg, node) {
       if (S.sel === null && S.tabNode === 'summary') renderMain();
     } else if (msg) {
       refresh();  // a guest we don't know — reconcile
+    }
+  } else if (topic.startsWith('$sys/leaf/')) {
+    // A leaf announced (or cleared) itself through this node, its gateway (three §7).
+    const name = topic.split('/')[2];
+    if (msg) {
+      const prev = S.leaves[name] || { guests: {} };
+      S.leaves[name] = { name, board: msg.board, transport: msg.transport, guests: prev.guests };
+    } else delete S.leaves[name];
+    renderTree();
+  } else if (topic.startsWith('leaf/') && topic.split('/')[2] === 'guest') {
+    // leaf/<name>/guest/<id> — a leaf's guest state, forwarded up by its gateway. A
+    // state may arrive before the leaf's announce, so create the leaf on a real state;
+    // but a CLEAR (msg null) must not conjure a phantom leaf out of a stray removal.
+    const [, name, , id] = topic.split('/');
+    if (msg) {
+      const leaf = S.leaves[name] || (S.leaves[name] = { name, guests: {} });
+      leaf.guests[id] = { id, state: msg.state };
+      renderTree();
+    } else if (S.leaves[name]) {
+      delete S.leaves[name].guests[id];
+      renderTree();
     }
   }
   if (S.bindWatch[topic]) {
@@ -963,8 +991,31 @@ function renderTree() {
           (g.suspected ? ' <span class="st fault" title="suspected in a watchdog reset">⚠</span>' : '') +
           `</button>`);
       }
-      if (!ids.length)
+      if (!ids.length && !Object.keys(S.leaves).length)
         rows.push(`<div class="note" style="padding:.3rem 2.1rem">no guests installed</div>`);
+
+      // ESP-NOW leaves hang off this node (their gateway), each opening to its own
+      // guests (three §7). They live only on their gateway's bus, so they appear here
+      // and not when you hop to a peer.
+      for (const name of Object.keys(S.leaves).sort()) {
+        const leaf = S.leaves[name];
+        const gids = Object.keys(leaf.guests).sort();
+        const lrun = gids.filter(g => leaf.guests[g].state === 'running').length;
+        const okey = 'leaf:' + name;
+        const open = !!S.open[okey];
+        rows.push(`<button class="trow leaf" data-tw="${esc(okey)}">` +
+          `<span class="tw">${gids.length ? (open ? '▾' : '▸') : '·'}</span>` +
+          `<span class="st ${lrun ? 'go' : 'off'}">◎</span>${esc(name)}` +
+          (leaf.transport ? `<span class="xfer">${esc(leaf.transport)}</span>` : '') +
+          `<span class="note" style="margin-left:auto">${lrun}/${gids.length}</span></button>`);
+        if (open) {
+          for (const id of gids) {
+            const [gl, cls] = GLYPH[leaf.guests[id].state] || ['?', 'off'];
+            rows.push(`<button class="trow lg" tabindex="-1">` +
+              `<span class="st ${cls}">${gl}</span>(${esc(id)})</button>`);
+          }
+        }
+      }
     }
 
     // The rest of the cluster: each peer is a node branch you can open to see its

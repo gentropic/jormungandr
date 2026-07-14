@@ -246,6 +246,41 @@ const firstRow = await page.evaluate(() => {
 });
 ok(`guests carry a number — ${firstRow}`, /\d{3}/.test(firstRow));
 
+// ── ESP-NOW leaves render under their gateway node (three §7) ─────────────
+// The node is not really a gateway, but the UI draws whatever leaf state is
+// retained on its bus — inject a leaf and its guests and it must appear.
+const pubLeaf = (topic, msg) => fetch(BASE + '/api/bus/publish',
+  { method: 'POST', headers: HDRS, body: JSON.stringify({ topic, msg, retain: true }) });
+await pubLeaf('$sys/leaf/leaf-demo',
+  { name: 'leaf-demo', board: 'ESP32C3', transport: 'espnow', hosts_guests: true });
+await pubLeaf('leaf/leaf-demo/guest/pinger', { state: 'running' });
+await pubLeaf('leaf/leaf-demo/guest/blinky', { state: 'stopped' });
+await refreshTree(page);
+await page.waitForSelector('.trow.leaf', { timeout: 8000 });
+ok('an ESP-NOW leaf appears under its gateway node, tagged with its transport',
+  await page.$eval('.trow.leaf', el =>
+    el.textContent.includes('leaf-demo') && /espnow/i.test(el.textContent)));
+ok('the leaf carries a running/total count (1/2)',
+  await page.$eval('.trow.leaf', el => el.textContent.includes('1/2')));
+await page.click('.trow.leaf .tw');
+await page.waitForSelector('.trow.lg', { timeout: 8000 });
+ok('the leaf opens to show its own guests, one level deeper',
+  await page.$$eval('.trow.lg', rows => {
+    const t = rows.map(r => r.textContent).join(' ');
+    return rows.length === 2 && t.includes('pinger') && t.includes('blinky');
+  }));
+// live update: stop the leaf's running guest and the count follows
+await pubLeaf('leaf/leaf-demo/guest/pinger', { state: 'stopped' });
+await page.waitForFunction(() =>
+  document.querySelector('.trow.leaf').textContent.includes('0/2'), null, { timeout: 8000 });
+ok('a leaf guest state change updates the tree live', true);
+// clearing the announce removes the whole branch; clean up for later checks
+await pubLeaf('$sys/leaf/leaf-demo', null);
+await pubLeaf('leaf/leaf-demo/guest/pinger', null);
+await pubLeaf('leaf/leaf-demo/guest/blinky', null);
+await page.waitForFunction(() => !document.querySelector('.trow.leaf'), null, { timeout: 8000 });
+ok('clearing the leaf announce removes it from the tree', true);
+
 // ── context menus (Proxmox is a right-click program) ─────────────────────
 await page.click('.trow.grp');
 await page.click('.tab[data-tab="summary"]');
