@@ -71,10 +71,12 @@ def sync(log=None, host=None):
         _state['boot_unix'] = time.time() + EPOCH_OFFSET - mono()
         _state.update(synced=True, source='host', last=now())
         return True
-    hosts = ['pool.ntp.org', 'time.google.com', 'time.cloudflare.com']
-    if host:
-        hosts = [host] + hosts
-    ntptime.timeout = 3
+    # ntptime.settime() is SYNCHRONOUS — it blocks the whole event loop while it waits.
+    # A configured host is the only reachable server on a cluster LAN, so try ONLY it:
+    # falling through to the public pools blocks 2 s each on a firewalled LAN, and four
+    # servers back to back sail past an 8 s hardware WDT — which reset a leaf mid-render.
+    hosts = [host] if host else ['pool.ntp.org', 'time.google.com', 'time.cloudflare.com']
+    ntptime.timeout = 2
     err = None
     for host in hosts:
         ntptime.host = host
