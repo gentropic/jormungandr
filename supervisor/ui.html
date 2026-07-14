@@ -64,6 +64,15 @@
 * { box-sizing:border-box; }
 html,body { margin:0; height:100%; }
 body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 var(--au-font-sans); }
+/* Themed scrollbars — the OS default bars clash on the dark surfaces (the bus, the
+   editor, the tree drawer). Thin, translucent track, palette thumb; both engines. */
+* { scrollbar-width:thin; scrollbar-color:var(--au-border) transparent; }
+::-webkit-scrollbar { width:10px; height:10px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--au-border); border-radius:8px;
+  border:2px solid transparent; background-clip:padding-box; }
+::-webkit-scrollbar-thumb:hover { background:var(--au-fg-soft); }
+::-webkit-scrollbar-corner { background:transparent; }
 .app { display:flex; flex-direction:column; min-height:100vh; }
 
 .mast { display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
@@ -496,7 +505,10 @@ async function api(method, path, body, raw) {
     if (!resp.ok) {
       try { throw new Error(JSON.parse(text).error); } catch (e) { throw new Error(e.message || text); }
     }
-    // a directory answers JSON even here; hand it back so the VFS can tell
+    // 'text' means literal bytes: a .json FILE is text to edit, not an object to
+    // display as [object Object]. Plain 'raw' still parses so the VFS can tell a
+    // directory listing (also JSON) apart from a file.
+    if (raw === 'text') return text;
     try { return JSON.parse(text); } catch (e) { return text; }
   }
   const data = await resp.json().catch(() => ({}));
@@ -1479,7 +1491,7 @@ async function loadFiles(id) {
     ed.value = 'loading…';
     ed.readOnly = true;
     try {
-      ed.value = await api('GET', `/api/fs/guests/${id}/${name}`, undefined, 'raw');
+      ed.value = await api('GET', `/api/fs/guests/${id}/${name}`, undefined, 'text');
       ed.readOnly = false;
       $('#fsave').disabled = $('#fsaverun').disabled = false;
       const g = S.guests[id];
