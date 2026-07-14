@@ -260,8 +260,8 @@ await page.waitForSelector('.trow.leaf', { timeout: 8000 });
 ok('an ESP-NOW leaf appears under its gateway node, tagged with its transport',
   await page.$eval('.trow.leaf', el =>
     el.textContent.includes('leaf-demo') && /espnow/i.test(el.textContent)));
-ok('the leaf carries a running/total count (1/2)',
-  await page.$eval('.trow.leaf', el => el.textContent.includes('1/2')));
+ok('the leaf carries a running/total count (1/2) in its tooltip',
+  await page.$eval('.trow.leaf', el => (el.getAttribute('title') || '').includes('1/2')));
 await page.click('.trow.leaf .tw');
 await page.waitForSelector('.trow.lg', { timeout: 8000 });
 ok('the leaf opens to show its own guests, one level deeper',
@@ -272,7 +272,8 @@ ok('the leaf opens to show its own guests, one level deeper',
 // live update: stop the leaf's running guest and the count follows
 await pubLeaf('leaf/leaf-demo/guest/pinger', { state: 'stopped' });
 await page.waitForFunction(() =>
-  document.querySelector('.trow.leaf').textContent.includes('0/2'), null, { timeout: 8000 });
+  (document.querySelector('.trow.leaf').getAttribute('title') || '').includes('0/2'),
+  null, { timeout: 8000 });
 ok('a leaf guest state change updates the tree live', true);
 // clearing the announce removes the whole branch; clean up for later checks
 await pubLeaf('$sys/leaf/leaf-demo', null);

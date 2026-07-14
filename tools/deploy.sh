@@ -52,8 +52,13 @@ for f in "$ROOT"/supervisor/lib/microdot/*.py; do
     $MP cp "$f" ":lib/microdot/$(basename "$f")"
 done
 
-echo "== ui"
+echo "== ui (html + a FRESH gz — index() serves ui.html.gz to any gzip client, so a"
+echo "   stale .gz left beside a new .html silently serves yesterday's interface)"
 $MP cp "$ROOT/supervisor/ui.html" :ui.html
+_uigz="${TMPDIR:-/tmp}/jorm-ui.html.gz"
+gzip -9 -c "$ROOT/supervisor/ui.html" > "$_uigz"
+$MP cp "$_uigz" :ui.html.gz
+rm -f "$_uigz"
 
 if [ "$WITH_SETTINGS" = "settings" ]; then
     [ -f "$ROOT/settings.json" ] || { echo "no settings.json — see settings.example.json"; exit 1; }

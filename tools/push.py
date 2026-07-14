@@ -10,8 +10,10 @@ sends the interrupt. Deterministic, no race.
 
     uvx --with pyserial python tools/push.py COM14 [--settings]
 """
+import gzip
 import os
 import sys
+import tempfile
 import time
 
 import serial
@@ -159,7 +161,15 @@ for d in ('lib', 'lib/microdot', 'jorm', 'guests'):
             node.put(os.path.join(lib, name), 'lib/microdot/' + name)
 
     print('== ui')
-    node.put(os.path.join(ROOT, 'supervisor', 'ui.html'), 'ui.html')
+    ui = os.path.join(ROOT, 'supervisor', 'ui.html')
+    node.put(ui, 'ui.html')
+    # index() serves ui.html.gz to any gzip-accepting client, so a stale .gz left
+    # beside a fresh .html serves yesterday's interface. Regenerate and ship it too.
+    gz = os.path.join(tempfile.gettempdir(), 'jorm-ui.html.gz')
+    with open(ui, 'rb') as f:
+        with open(gz, 'wb') as g:
+            g.write(gzip.compress(f.read(), 9))
+    node.put(gz, 'ui.html.gz')
 
     if with_settings:
         print('== settings.json (secrets)')

@@ -101,7 +101,8 @@ body { background:var(--au-surface); color:var(--au-fg); font:400 14.5px/1.55 va
 .tree .sect { font:400 .62rem var(--au-font-mono); letter-spacing:.22em; text-transform:uppercase;
   color:var(--au-fg-soft); padding:.35rem .8rem .2rem; }
 .trow { display:flex; align-items:center; gap:.5rem; width:100%; text-align:left;
-  font:400 .78rem var(--au-font-mono); color:var(--au-fg); background:none; border:none;
+  white-space:nowrap; font:400 .78rem var(--au-font-mono); color:var(--au-fg);
+  background:none; border:none;
   border-left:2px solid transparent; padding:.3rem .8rem; cursor:pointer; }
 /* One indent step per level. The root had the base .8rem and its child had .4rem,
    so the tree read backwards — the parent looked nested inside its own children. */
@@ -1003,11 +1004,14 @@ function renderTree() {
         const lrun = gids.filter(g => leaf.guests[g].state === 'running').length;
         const okey = 'leaf:' + name;
         const open = !!S.open[okey];
-        rows.push(`<button class="trow leaf" data-tw="${esc(okey)}">` +
+        // The tree is narrow; the transport tag is the point of §7 (an ESP-NOW leaf
+        // named as such under its gateway), so it right-aligns and the running/total —
+        // redundant once you open the branch to its guests — is dropped to make room.
+        rows.push(`<button class="trow leaf" data-tw="${esc(okey)}" title="${lrun}/${gids.length} running">` +
           `<span class="tw">${gids.length ? (open ? '▾' : '▸') : '·'}</span>` +
           `<span class="st ${lrun ? 'go' : 'off'}">◎</span>${esc(name)}` +
-          (leaf.transport ? `<span class="xfer">${esc(leaf.transport)}</span>` : '') +
-          `<span class="note" style="margin-left:auto">${lrun}/${gids.length}</span></button>`);
+          (leaf.transport ? `<span class="xfer" style="margin-left:auto">${esc(leaf.transport)}</span>` : '') +
+          `</button>`);
         if (open) {
           for (const id of gids) {
             const [gl, cls] = GLYPH[leaf.guests[id].state] || ['?', 'off'];
