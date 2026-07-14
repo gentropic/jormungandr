@@ -67,6 +67,10 @@ async def run(hal):
 EOF
 $JORM create "$TMP/slowpoke" >/dev/null
 $JORM start slowpoke >/dev/null
+# pinger is a calm 1 Hz heartbeat now (it flooded a real leaf at 10 Hz), so drive the
+# throughput here: a burst overruns the slow consumer's queue and gives echoer plenty to
+# tock at — the backpressure this test is actually about, decoupled from pinger's rate.
+for i in $(seq 1 60); do $JORM pub "pinger/tick" "{\"n\": $i}" >/dev/null; done
 sleep 4
 api /api/guests/slowpoke | python3 -c "
 import json, sys
