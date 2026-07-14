@@ -222,7 +222,26 @@ async def main():
     ok(len(out) == before, 'a whole-session replay is rejected after re-handshake')
     gw.cancel(); serv.cancel()
 
-    print('\nFRAG+REPLAY: %s' % ('ALL PASS' if not fails else '%d FAILED' % fails))
+    # 8. cluster time: a sealed T_TIME broadcast sets the receiver's clock via time_cb
+    a, b = _pair()
+    got = []
+    b.time_cb = lambda ts: got.append(ts)
+    b_recv = asyncio.create_task(b.recv())
+    await a.send_time(1780000000)
+    await asyncio.sleep_ms(150)
+    b_recv.cancel()
+    ok(got == [1780000000], 'a sealed T_TIME broadcast sets the receiver clock (%r)' % got)
+    # a forged time (sealed with the wrong token) is ignored
+    from jorm.espnow import EspNowLink, T_TIME
+    from jorm.seal import Sealer
+    forged = bytes([T_TIME]) + Sealer('WRONG-token').seal((1780000000).to_bytes(8, 'big'))
+    got2 = []
+    b2 = EspNowLink(TOKEN)
+    b2.time_cb = lambda ts: got2.append(ts)
+    b2._on_time(MAC_A, forged)
+    ok(got2 == [], 'a T_TIME sealed with the wrong token is ignored')
+
+    print('\nFRAG+REPLAY+TIME: %s' % ('ALL PASS' if not fails else '%d FAILED' % fails))
     sys.exit(1 if fails else 0)
 
 

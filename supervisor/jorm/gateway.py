@@ -30,6 +30,7 @@ class Gateway:
     async def run(self):
         self.node.log.append('sys', 'espnow gateway up (mac %s)' % _hex(self.link.mac()))
         asyncio.create_task(self._hello_loop())
+        asyncio.create_task(self._time_loop())
         while True:
             try:
                 mac, text = await self.link.recv()
@@ -38,6 +39,16 @@ class Gateway:
                 await asyncio.sleep_ms(200)
                 continue
             self._on_frame(mac, text)
+
+    async def _time_loop(self):
+        # Hand the cluster's wall clock to leaves that have no NTP of their own (§5). The
+        # flagship syncs NTP; a leaf sets its clock from this sealed broadcast. Only once
+        # we actually have the time — a leaf's uptime clock is better than a wrong one.
+        from jorm import clock
+        while True:
+            await asyncio.sleep(10)
+            if clock.status()['synced']:
+                await self.link.send_time(clock.now())
 
     async def _hello_loop(self):
         # Advertise for leaves to find, sealed so only token-holders can read it (§5).

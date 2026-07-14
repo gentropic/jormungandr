@@ -94,3 +94,18 @@ def sync(log=None, host=None):
     if log:
         log.append('sys', 'ntp: clock set — earlier lines are now dated too')
     return True
+
+
+def set_unix(ts, log=None):
+    """Set the clock from a Unix timestamp handed to us — the cluster's own NTP time,
+    distributed over the bus to a leaf that has no route to an NTP server (an ESP-NOW
+    leaf has no IP at all). Same offset-once mechanism as sync(): we learn boot_unix and
+    everything, including the past, is dated from it. Re-set on each broadcast keeps a
+    leaf with no RTC from drifting. The frame carrying `ts` is sealed, so only a
+    token-holder can inject one; a replay just re-applies a slightly-stale time that the
+    next broadcast corrects."""
+    _state['boot_unix'] = int(ts) - mono()
+    _state.update(synced=True, source='cluster', last=now())
+    if log:
+        log.append('sys', 'clock set from the cluster (%d) — no NTP needed here' % int(ts))
+    return True

@@ -55,6 +55,7 @@ T_WELCOME = 5           # handshake 2 (responder -> initiator): echo + my nonce 
 T_CONFIRM = 6           # handshake 3 (initiator -> responder): echo, activate
 T_PING = 7              # app-level liveness probe
 T_PONG = 8              # app-level liveness reply
+T_TIME = 9              # gateway -> broadcast: the cluster's Unix time (no NTP on a leaf)
 
 _SENT_TTL_MS = 4000     # how long a sender keeps fragments around to answer a NAK
 _NAK_AFTER_MS = 300     # how long a receiver waits for a gap before asking
@@ -83,6 +84,7 @@ class EspNowLink:
         self._sent = {}           # (mac, msg_id) -> {'frames': [...], 't'}
         self._nak_task = None
         self.last_rx = time.ticks_ms()   # app-level liveness: last valid frame in
+        self.time_cb = None       # set by a leaf: called with the cluster's Unix time
 
     def mac(self):
         return network.WLAN(network.STA_IF).config('mac')
@@ -119,6 +121,26 @@ class EspNowLink:
         try:
             await self.e.asend(BROADCAST, frame, False)   # broadcast: no ACK to wait on
         except OSError:
+            pass
+
+    async def send_time(self, ts):
+        """Broadcast the cluster's Unix time, sealed with the group key so only a
+        token-holder can set a leaf's clock. Any leaf on the channel picks it up and
+        needs no NTP of its own — an ESP-NOW leaf has no IP to reach one anyway."""
+        self.add_peer(BROADCAST)
+        frame = bytes([T_TIME]) + self._seal.seal(int(ts).to_bytes(8, 'big'))
+        try:
+            await self.e.asend(BROADCAST, frame, False)
+        except OSError:
+            pass
+
+    def _on_time(self, mac, frame):
+        pt = self._seal.unseal(frame[1:])
+        if pt is None or len(pt) < 8 or self.time_cb is None:
+            return
+        try:
+            self.time_cb(int.from_bytes(pt[:8], 'big'))
+        except Exception:
             pass
 
     async def scan_for_gateway(self, cluster, wlan, channels=None, dwell_ms=1500):
@@ -339,6 +361,9 @@ class EspNowLink:
                 continue
             if t == T_PONG:
                 self._on_pong(mac, frame)
+                continue
+            if t == T_TIME:
+                self._on_time(mac, frame)
                 continue
             if t == T_WELCOME:
                 continue                        # only meaningful inside handshake()

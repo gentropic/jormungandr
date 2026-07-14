@@ -213,8 +213,17 @@ async def _find_gateway(node, link):
 
 async def _espnow_uplink(node, sup):
     from jorm import guests as store
+    from jorm import clock
     from jorm.espnow import EspNowLink
     link = EspNowLink(node.token)
+
+    def _settime(ts):
+        # the gateway hands us the cluster's wall clock; an ESP-NOW leaf has no NTP. Log
+        # only the first set (unsynced -> synced); after that it is a silent 10 s refresh.
+        first = not clock.status()['synced']
+        clock.set_unix(ts, node.log if first else None)
+    link.time_cb = _settime
+
     myname = node.hostname
     cmd_prefix = 'cmd/leaf/%s/' % myname
     up_prefix = 'leaf/%s/' % myname
