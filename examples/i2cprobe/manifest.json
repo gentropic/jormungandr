@@ -1,0 +1,12 @@
+{
+  "spec": 0,
+  "id": "i2cprobe",
+  "name": "I2C probe",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": {
+    "i2c": [{ "bus": 0, "addrs": [118] }],
+    "bus": { "pub": ["i2cprobe/#"] }
+  }
+}

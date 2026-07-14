@@ -110,7 +110,11 @@ class I2C:
         print('[sim] i2c%d write 0x%02x: %d bytes' % (self._id, addr, len(buf)))
 
     def readfrom_mem(self, addr, memaddr, n):
-        return bytes(n)
+        # Canned device registers, so a sim sensor guest reads plausible values, not zeros —
+        # a BMP280-ish device at 0x76: 0xD0 is the chip id (0x58); other regs ramp slowly.
+        if addr == 0x76 and memaddr == 0xD0:
+            return bytes([0x58] + [0] * (n - 1)) if n else b''
+        return bytes((time.ticks_ms() // 100 + i) & 0xff for i in range(n))
 
     def writeto_mem(self, addr, memaddr, buf):
         print('[sim] i2c%d mem write 0x%02x/%d: %d bytes' % (self._id, addr, memaddr, len(buf)))
@@ -126,6 +130,36 @@ class SPI:
     def write_readinto(self, wbuf, rbuf):
         for i in range(len(rbuf)):
             rbuf[i] = 0
+
+
+class UART:
+    """Loopback UART: the sim has no wire, so what a guest writes it can read back — enough
+    to prove the cap round-trips (tx -> rx) without silicon. Real behaviour is the board's."""
+
+    def __init__(self, id=1, baudrate=9600, tx=None, rx=None, **kw):
+        self._id = id
+        self._buf = b''
+
+    def write(self, buf):
+        self._buf += bytes(buf)
+        return len(buf)
+
+    def read(self, n=None):
+        if n is None or n >= len(self._buf):
+            r, self._buf = self._buf, b''
+        else:
+            r, self._buf = self._buf[:n], self._buf[n:]
+        return r or None
+
+    def readline(self):
+        i = self._buf.find(b'\n')
+        if i < 0:
+            return self.read()
+        r, self._buf = self._buf[:i + 1], self._buf[i + 1:]
+        return r
+
+    def any(self):
+        return len(self._buf)
 
 
 class RTC:

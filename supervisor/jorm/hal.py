@@ -100,6 +100,12 @@ class Hal:
             raise CapError('spi %d/cs %d not granted to guest "%s"' % (bus, cs, self._guest.id))
         return SpiHandle(self, bus, cs)
 
+    def uart(self, id):
+        for e in self._caps().get('uart', []):
+            if e['id'] == id and self._sup.claims.uart_grant(self._guest.id, e['tx']):
+                return UartHandle(id, e['tx'], e['rx'], e.get('baud', 9600))
+        raise CapError('uart %d not granted to guest "%s"' % (id, self._guest.id))
+
     def rgb(self, n):
         if not self._sup.claims.rgb_grant(self._guest.id, n):
             raise CapError('rgb on pin %d not granted to guest "%s"' % (n, self._guest.id))
@@ -592,6 +598,27 @@ class SpiHandle:
             self._spi.write(buf)
         finally:
             self._cs.value(1)
+
+
+class UartHandle:
+    """A supervisor-owned UART, granted by declaring its id + tx/rx pins. A guest talks a
+    serial peripheral (a GPS, another MCU) without importing machine — the pins are reserved
+    like any other, so two guests can't fight over the same wire."""
+
+    def __init__(self, id, tx, rx, baud):
+        self._u = machine.UART(id, baudrate=baud, tx=machine.Pin(tx), rx=machine.Pin(rx))
+
+    def write(self, buf):
+        return self._u.write(buf)
+
+    def read(self, n=None):
+        return self._u.read(n)
+
+    def readline(self):
+        return self._u.readline()
+
+    def any(self):
+        return self._u.any()
 
 
 class NetResponse:

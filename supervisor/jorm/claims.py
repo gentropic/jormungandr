@@ -36,6 +36,9 @@ class Claims:
         reqs += [(n, 'pwm', None, None) for n in caps.get('pwm', [])]
         reqs += [(n, 'adc', None, None) for n in caps.get('adc', [])]
         reqs += [(e['cs'], 'cs', None, e['bus']) for e in caps.get('spi', [])]
+        for e in caps.get('uart', []):     # a uart owns its tx + rx pins outright
+            reqs.append((e['tx'], 'uart', None, None))
+            reqs.append((e['rx'], 'uart', None, None))
         reqs += [(e['pin'], 'rgb', None, None) for e in caps.get('rgb', [])]
         mx = caps.get('matrix')
         if mx:                          # an LED matrix owns its sck/mosi/cs outright
@@ -135,6 +138,9 @@ class Claims:
     def spi_grant(self, guest_id, bus, cs):
         entry = self._pin_mode(guest_id, cs, ('cs',))
         return entry if entry and entry['bus'] == bus else None
+
+    def uart_grant(self, guest_id, tx):
+        return self._pin_mode(guest_id, tx, ('uart',)) is not None
 
     def i2c_grant(self, guest_id, bus, addr):
         return self._i2c.get((bus, addr)) == guest_id

@@ -1,0 +1,12 @@
+{
+  "spec": 0,
+  "id": "uartecho",
+  "name": "UART echo",
+  "version": "0.1.0",
+  "runtime": "mpy",
+  "entry": "main.py",
+  "caps": {
+    "uart": [{ "id": 1, "tx": 17, "rx": 16, "baud": 115200 }],
+    "bus": { "pub": ["uartecho/#"] }
+  }
+}

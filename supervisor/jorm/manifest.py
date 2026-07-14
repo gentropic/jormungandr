@@ -4,9 +4,9 @@ from jorm.bus import valid_filter
 
 _ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789-'
 
-KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'ble', 'bus', 'ui',
+KNOWN_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'uart', 'net', 'ble', 'bus', 'ui',
               'storage', 'mem_kb', 'usb', 'rgb', 'matrix', 'display')
-SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'net', 'bus', 'ui',
+SUPPORTED_CAPS = ('pins', 'pwm', 'adc', 'i2c', 'spi', 'uart', 'net', 'bus', 'ui',
                   'storage', 'mem_kb', 'rgb', 'usb', 'matrix', 'display')  # ble is post-zero
 
 
@@ -91,6 +91,12 @@ def validate(m):
         if not (isinstance(e, dict) and isinstance(e.get('bus'), int)
                 and isinstance(e.get('cs'), int)):
             raise ManifestError('spi entries must be {"bus": n, "cs": pin}')
+    for e in caps.get('uart', []):
+        if not (isinstance(e, dict) and isinstance(e.get('id'), int)
+                and isinstance(e.get('tx'), int) and isinstance(e.get('rx'), int)):
+            raise ManifestError('uart entries must be {"id": n, "tx": pin, "rx": pin, "baud"?: n}')
+        if 'baud' in e and not (isinstance(e['baud'], int) and e['baud'] > 0):
+            raise ManifestError('uart baud must be a positive integer')
     if 'net' in caps and caps['net'] != {'client': True}:
         raise ManifestError('caps.net is {"client": true} — guest servers are a later cap (spec §3)')
     if 'ui' in caps and caps['ui'] is not True:
