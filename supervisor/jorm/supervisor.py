@@ -30,6 +30,13 @@ def _exists(path):
 
 RTC_TAG = b'jorm!'
 
+# Serving self-probe cadence: probe every HEALTH_PROBE_S; after HEALTH_FAIL_MAX consecutive
+# failures (~60 s of a wedged server) the heartbeat stops feeding the WDT and the node
+# reboots. Conservative on purpose — a false reboot-loop on a headless node is worse than a
+# wedge you can physically reset, so it takes sustained failure, not one slow probe.
+HEALTH_PROBE_S = 10
+HEALTH_FAIL_MAX = 6
+
 # spec §1: the built-in whitelist of pure stdlib a guest may import
 IMPORT_WHITELIST = ('json', 'math', 'struct', 'collections', 'binascii', 're')
 
@@ -43,6 +50,12 @@ class Supervisor:
         self.current = None    # guest id holding the CPU right now
         self.last_seen = None  # last guest to hold it (soft-flagging evidence)
         self._flagged = None
+        # Serving health (full nodes): a loopback self-probe watches that the HTTP server
+        # actually answers, so the heartbeat feeds the WDT only while the node is really
+        # SERVING — not merely while the event loop cycles. c510 once fed the watchdog for
+        # ages while its server was wedged; loop-liveness isn't service-liveness.
+        self._health_fails = 0     # consecutive failed serving probes (0 = healthy)
+        self._health_watch = False # true once serving_watch runs; else the gate is inert
         self._rtc = machine.RTC()
         self._i2c = {}
         self._spi = {}
@@ -287,7 +300,10 @@ class Supervisor:
         sample_n = 0
         while True:
             await asyncio.sleep_ms(100)
-            if wdt:
+            # Feed the watchdog unless the serving-probe says the server has been wedged for
+            # HEALTH_FAIL_MAX probes running — then withhold the feed so the WDT reboots us.
+            # The gate is inert on a leaf (no serving_watch), which feeds on loop-liveness.
+            if wdt and not (self._health_watch and self._health_fails >= HEALTH_FAIL_MAX):
                 wdt.feed()
             now = time.ticks_ms()
             gap = time.ticks_diff(now, last)
@@ -341,3 +357,48 @@ class Supervisor:
                         self.node.log.append(
                             'sys', 'supervisor stalled %d ms (no guest held the CPU) '
                                    '— gc, or the node is simply busy' % gap)
+
+    async def serving_watch(self):
+        """Prove the HTTP server actually ANSWERS, not just that the loop cycles. A loopback
+        GET / (public, no auth) every HEALTH_PROBE_S; HEALTH_FAIL_MAX misses in a row means the
+        server is wedged and the heartbeat should let the watchdog reboot us. Full nodes only —
+        a leaf has no server, so it never starts this and keeps the plain loop-liveness feed."""
+        if not self.node.settings.get('wdt_health', True):
+            return
+        self._health_watch = True
+        probe_s = self.node.settings.get('wdt_probe_s', HEALTH_PROBE_S)
+        port = self.node.settings.get('wdt_probe_port', self.node.port)  # defaults to the API port
+        while True:
+            await asyncio.sleep(probe_s)
+            ok = False
+            try:
+                r, w = await asyncio.wait_for(asyncio.open_connection('127.0.0.1', port), 5)
+                try:
+                    w.write(b'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n')
+                    await asyncio.wait_for(w.drain(), 5)
+                    line = await asyncio.wait_for(r.readline(), 5)
+                    ok = bool(line) and line.startswith(b'HTTP/')
+                finally:
+                    # Closing must never flip a good probe to failed — wait_closed is absent on
+                    # some MicroPython builds, so guard it in its own swallowing try.
+                    try:
+                        w.close()
+                        wc = getattr(w, 'wait_closed', None)
+                        if wc:
+                            await wc()
+                    except Exception:
+                        pass
+            except Exception:
+                ok = False
+            if ok:
+                if self._health_fails:
+                    self.node.log.append('sys', 'serving-probe recovered after %d miss(es)'
+                                         % self._health_fails)
+                self._health_fails = 0
+            else:
+                self._health_fails += 1
+                if self._health_fails == HEALTH_FAIL_MAX:
+                    self.node.log.append(
+                        'error', 'http server unresponsive for %d probes (~%d s) — withholding '
+                                 'the watchdog feed; the node will reboot'
+                                 % (HEALTH_FAIL_MAX, HEALTH_FAIL_MAX * probe_s))

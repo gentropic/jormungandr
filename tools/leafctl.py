@@ -68,7 +68,8 @@ class Sealer:
 def main():
     ap = argparse.ArgumentParser(description='sealed-UDP leaf management')
     ap.add_argument('host')
-    ap.add_argument('op', choices=('ping', 'state', 'log', 'start', 'stop', 'restart', 'install'))
+    ap.add_argument('op', choices=('ping', 'state', 'log', 'start', 'stop', 'restart',
+                                   'install', 'reboot'))
     ap.add_argument('guest', nargs='?',
                     help='guest id (start/stop/restart), or local bundle dir (install)')
     ap.add_argument('--token', default=os.environ.get('JORM_TOKEN'))
@@ -155,6 +156,8 @@ def main():
         if not a.guest:
             sys.exit('%s needs a guest id' % a.op)
         req['guest'] = a.guest
+        req['nonce'] = nonce()
+    if a.op == 'reboot':
         req['nonce'] = nonce()
     print(json.dumps(rpc(req), indent=2))
 

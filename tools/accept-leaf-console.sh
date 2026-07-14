@@ -51,9 +51,11 @@ pass "leaf 'self' listed from settings"
 echo "== /api/leaves/self/state queries the leaf over the sealed door"
 API "$JORM_URL/api/leaves/self/state" | python3 -c "
 import json,sys; d=json.load(sys.stdin)
-assert d.get('online') and 'guests' in d and 'heap_free' in d and 'synced' in d, d" \
+assert d.get('online') and 'guests' in d and 'heap_free' in d and 'synced' in d, d
+assert 'uptime_ms' in d and 'reset' in d and 'rssi' in d, ('enriched state fields missing', d)
+assert d['reset'] == 'pwron', ('sim reset cause should resolve to pwron', d)" \
     || fail "leaf state not returned over the door"
-pass "leaf state (guests, heap_free, synced) fetched over UDP through HTTP"
+pass "leaf state (guests, heap, sync, uptime, reset-reason, rssi) fetched over the door"
 
 echo "== install a guest, then drive it on the leaf via the console"
 $JORM create "$ROOT/examples/echoer" >/dev/null || fail "could not install echoer"
@@ -117,6 +119,12 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer 
        "$JORM_URL/api/leaves/self/guests/echoer/frobnicate")
 [ "$code" = "400" ] || fail "bad action returned $code, expected 400"
 pass "unknown action -> 400"
+
+echo "== reboot a leaf over the door (must be last — the sim node exits on machine.reset)"
+API -X POST "$JORM_URL/api/leaves/self/reboot" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+assert d.get('ok') and d.get('rebooting'), d" || fail "reboot not accepted over the door"
+pass "reboot accepted over the door (node resets after the reply — no cable needed)"
 
 echo
 echo "LEAF-CONSOLE acceptance (sim): ALL PASS — flagship queries + drives a leaf over the sealed door"

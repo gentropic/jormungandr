@@ -24,7 +24,7 @@ from jorm.seal import Sealer
 
 PORT = 5355
 _NONCE_CAP = 32          # bound the issued-but-unused set; a nonce-hoarder can't grow it
-_MUTATING = ('start', 'stop', 'restart', 'install')
+_MUTATING = ('start', 'stop', 'restart', 'install', 'reboot')
 
 
 def _sandbox(path):
@@ -134,7 +134,8 @@ async def _dispatch(node, sup, req, nonces, uploads):
         gc.collect()
         return {'ok': True, 'name': node.hostname, 'ip': node.ip,
                 'guests': [{'id': g.id, 'state': g.state} for g in sup.guests.values()],
-                'heap_free': gc.mem_free(), 'synced': clock.status()['synced']}
+                'heap_free': gc.mem_free(), 'synced': clock.status()['synced'],
+                'uptime_ms': node.uptime_ms(), 'reset': node.reset_reason(), 'rssi': node.rssi()}
     if op == 'log':
         return {'ok': True, 'log': node.log.tail(int(req.get('n', 20)))}
     if op == 'put':
@@ -187,6 +188,16 @@ async def _dispatch(node, sup, req, nonces, uploads):
         if n not in nonces:
             return {'ok': False, 'err': 'stale or missing nonce — fetch one with op=nonce'}
         nonces.remove(n)                           # consume: a nonce works exactly once
+        if op == 'reboot':
+            # Recover a headless leaf without a cable. Reset AFTER the sealed reply gets out,
+            # so the caller learns the reboot was accepted rather than seeing a silent drop.
+            import machine
+
+            async def _later():
+                await asyncio.sleep_ms(300)
+                machine.reset()
+            asyncio.create_task(_later())
+            return {'ok': True, 'rebooting': True}
         if op == 'install':
             return _install(sup, req)
         gid = req.get('guest')

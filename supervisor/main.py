@@ -176,6 +176,7 @@ async def confirm_trial(node):
 
 async def amain(node, sup, app):
     asyncio.create_task(sup.heartbeat())
+    asyncio.create_task(sup.serving_watch())   # health-gate the WDT: only feed while serving
     asyncio.create_task(sup.ntp())
     asyncio.create_task(sup.telemetry())
     from jorm.netwatch import wifi_watch

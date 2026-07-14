@@ -14,6 +14,20 @@ def reset():
     sys.exit(0)
 
 
+# Reset-cause constants + a stub cause, so node.reset_reason() resolves to a real name off
+# hardware (a fresh sim boot reads as a power-on). Values mirror the ESP32 port's ordering.
+PWRON_RESET = 1
+HARD_RESET = 2
+WDT_RESET = 3
+DEEPSLEEP_RESET = 4
+SOFT_RESET = 5
+BROWNOUT_RESET = 6
+
+
+def reset_cause():
+    return PWRON_RESET
+
+
 def unique_id():
     return b'\xb8\xf8\x62\xf7\xc5\x10'
 

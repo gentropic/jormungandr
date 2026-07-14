@@ -65,3 +65,23 @@ class Node:
             'uptime_ms': time.ticks_diff(time.ticks_ms(), self._boot),
             'clock': clock.status(),
         }
+
+    def uptime_ms(self):
+        return time.ticks_diff(time.ticks_ms(), self._boot)
+
+    def reset_reason(self):
+        """Why the node last booted — 'pwron'/'wdt'/'soft'/'hard'/'brownout'/'deepsleep', or
+        None where the port can't say (the unix sim). A headless node that rebooted on its own
+        can tell you why over the door instead of over a cable you'd have to go plug in."""
+        try:
+            import machine
+            cause = machine.reset_cause()
+        except (ImportError, AttributeError, OSError):
+            return None
+        names = {}
+        for n in ('PWRON_RESET', 'HARD_RESET', 'WDT_RESET', 'DEEPSLEEP_RESET',
+                  'SOFT_RESET', 'BROWNOUT_RESET'):
+            v = getattr(machine, n, None)
+            if v is not None:
+                names[v] = n[:-6].lower()
+        return names.get(cause, 'code-%d' % cause)

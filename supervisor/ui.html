@@ -463,6 +463,11 @@ input[type=range] { accent-color:var(--au-action); width:100%; }
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDur = ms => {
+  if (ms == null) return '—';
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+};
 const SCROLLBACK = 500;
 
 const S = {
@@ -658,11 +663,22 @@ function leafMenu(x, y, name) {
   const leaf = S.leaves[name];
   if (!leaf) return;
   const okey = 'leaf:' + name;
-  openMenu(x, y, name + (leaf.online === false ? ' · offline' : ''), [
+  const items = [
     { glyph: '◫', label: 'Open', run: () => selectLeaf(name) },
     { glyph: S.open[okey] ? '▾' : '▸', label: S.open[okey] ? 'Collapse' : 'Expand',
       run: () => { S.open[okey] = !S.open[okey]; renderTree(); } },
-  ]);
+  ];
+  if (leaf.door) {   // a door leaf can be rebooted over the door — the headless recovery path
+    items.push('-', { glyph: '↻', label: 'Reboot leaf', danger: true, confirm: `Reboot ${name}?`,
+      run: async () => {
+        try {
+          const r = await api('POST', `/api/leaves/${encodeURIComponent(name)}/reboot`);
+          toast(r && r.online === false ? name + ' did not answer the door' : 'rebooting ' + name,
+            r && r.online === false ? 'fault' : 'info');
+        } catch (e) { toast('reboot: ' + e.message, 'fault'); }
+      } });
+  }
+  openMenu(x, y, name + (leaf.online === false ? ' · offline' : ''), items);
 }
 
 function leafGuestMenu(x, y, name, id) {
@@ -1020,7 +1036,8 @@ async function loadLeaves() {
     if (st.online && st.guests) for (const g of st.guests) guests[g.id] = { id: g.id, state: g.state };
     S.leaves[L.name] = { name: L.name, host: L.host, port: L.port, door: true,
       transport: L.transport || 'wifi', online: !!st.online, heap_free: st.heap_free,
-      synced: st.synced, guests: st.online ? guests : ((S.leaves[L.name] || {}).guests || {}) };
+      synced: st.synced, uptime_ms: st.uptime_ms, reset: st.reset, rssi: st.rssi,
+      guests: st.online ? guests : ((S.leaves[L.name] || {}).guests || {}) };
   }));
   // Drop door leaves no longer configured — but never a bus/ESP-NOW leaf (it has no .door).
   for (const name of Object.keys(S.leaves))
@@ -1308,6 +1325,8 @@ function renderLeaf(main, name) {
         <dt>name</dt><dd>${esc(name)}</dd>
         <dt>reach</dt><dd>${door ? esc((leaf.host || '?') + ':' + (leaf.port || 5355)) + ' · sealed-UDP' : 'forwarded by its gateway'}</dd>
         <dt>transport</dt><dd>${esc(leaf.transport || '—')}</dd>
+        <dt>uptime</dt><dd>${door ? fmtDur(leaf.uptime_ms) : '—'}</dd>
+        <dt>last reset</dt><dd>${door && leaf.reset ? esc(leaf.reset) : '—'}</dd>
         <dt>status</dt><dd>${online ? 'online' : '<span style="color:var(--au-warn)">⚠ not answering the door</span>'}</dd>
       </dl></div></div>
     <div class="panel"><div class="panel-hd"><span>Guests</span><span>${gids.length}</span></div>

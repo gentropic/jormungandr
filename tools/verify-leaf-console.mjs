@@ -108,6 +108,18 @@ await page.waitForFunction(() =>
   document.querySelector('#leafcfg [data-key="period_ms"]').value === '2500', null, { timeout: 8000 });
 ok('editing a leaf guest slider and saving writes config over the door', true);
 
+// enriched detail: uptime + last-reset reason arrived over the door
+const mainTxt = await page.textContent('#main');
+ok('leaf detail shows uptime and last-reset (enriched state over the door)',
+  /last reset/i.test(mainTxt) && /pwron/i.test(mainTxt));
+
+// the leaf menu offers Reboot (headless recovery) — open it, don't fire it (would reset the sim)
+await page.click('.trow.leaf', { button: 'right' });
+await page.waitForSelector('#menu', { timeout: 4000 });
+ok('right-click the leaf → a Reboot item (recover a headless leaf over the door)',
+  /Reboot/.test(await page.textContent('#menu')));
+await page.keyboard.press('Escape');
+
 // the same actions on a right-click menu in the tree
 await page.click('.trow.leaf .tw');   // expand its guests
 await page.waitForSelector('.trow.lg', { timeout: 6000 });

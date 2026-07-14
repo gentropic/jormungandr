@@ -652,6 +652,17 @@ def create_app(node, sup):
         except DoorError as e:
             return {'name': name, 'online': False, 'error': str(e)}
 
+    @app.post('/api/leaves/<name>/reboot')
+    async def api_leaf_reboot(req, name):
+        # Reboot a headless leaf over the door — the leaf equivalent of /api/node/reboot.
+        L = _leaf(name)
+        if L is None:
+            return {'error': 'no such leaf "%s"' % name}, 404
+        try:
+            return await leaf_client.command(L['host'], 'reboot', port=L.get('port', 5355))
+        except DoorError as e:
+            return {'name': name, 'online': False, 'error': str(e)}
+
     @app.post('/api/leaves/<name>/pub')
     async def api_leaf_pub(req, name):
         # The generic pipe surfaced over HTTP: publish an arbitrary message onto a leaf's bus
