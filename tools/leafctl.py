@@ -65,7 +65,8 @@ class Sealer:
 def main():
     ap = argparse.ArgumentParser(description='sealed-UDP leaf management')
     ap.add_argument('host')
-    ap.add_argument('op', choices=('ping', 'state', 'log'))
+    ap.add_argument('op', choices=('ping', 'state', 'log', 'start', 'stop', 'restart'))
+    ap.add_argument('guest', nargs='?', help='guest id (for start/stop/restart)')
     ap.add_argument('--token', default=os.environ.get('JORM_TOKEN'))
     ap.add_argument('--port', type=int, default=PORT)
     ap.add_argument('--n', type=int, default=20, help='log: number of lines')
@@ -78,19 +79,34 @@ def main():
     req = {'op': a.op}
     if a.op == 'log':
         req['n'] = a.n
+    if a.op in ('start', 'stop', 'restart'):
+        if not a.guest:
+            sys.exit('%s needs a guest id' % a.op)
+        req['guest'] = a.guest
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(a.timeout)
-    s.sendto(seal.seal(json.dumps(req).encode()), (a.host, a.port))
-    try:
-        data, _ = s.recvfrom(8192)
-    except socket.timeout:
-        sys.exit('no reply from %s:%d (unreachable, or wrong token — sealed drops are silent)'
-                 % (a.host, a.port))
-    pt = seal.unseal(data)
-    if pt is None:
-        sys.exit('reply did not authenticate (wrong token?)')
-    print(json.dumps(json.loads(pt), indent=2))
+
+    def rpc(payload):
+        s.sendto(seal.seal(json.dumps(payload).encode()), (a.host, a.port))
+        try:
+            data, _ = s.recvfrom(8192)
+        except socket.timeout:
+            sys.exit('no reply from %s:%d (unreachable, or wrong token — sealed drops are silent)'
+                     % (a.host, a.port))
+        pt = seal.unseal(data)
+        if pt is None:
+            sys.exit('reply did not authenticate (wrong token?)')
+        return json.loads(pt)
+
+    # Mutating ops carry a single-use, server-issued nonce so a captured datagram can't be
+    # replayed. Fetch one first; read ops need none.
+    if a.op in ('start', 'stop', 'restart'):
+        nr = rpc({'op': 'nonce'})
+        if not nr.get('nonce'):
+            sys.exit('could not obtain a nonce: %s' % nr)
+        req['nonce'] = nr['nonce']
+    print(json.dumps(rpc(req), indent=2))
 
 
 if __name__ == '__main__':
