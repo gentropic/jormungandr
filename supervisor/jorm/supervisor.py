@@ -98,7 +98,7 @@ class Supervisor:
         so in /api/node rather than quietly serving 1970 to every console pane."""
         tries = 0
         while True:
-            if clock.sync(self.node.log):
+            if clock.sync(self.node.log, self.node.settings.get('ntp_host')):
                 await asyncio.sleep(86400)   # daily, per spec §4
                 tries = 0
             else:

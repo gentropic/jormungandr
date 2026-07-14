@@ -53,13 +53,16 @@ def status():
             'last_sync': _state['last'] or None}
 
 
-def sync(log=None):
+def sync(log=None, host=None):
     """Set the clock. Returns True if timestamps can now be trusted.
 
     Trustworthy has two sources, and the flag must not lie in either direction:
     an MCU has no clock until NTP sets one, but the sim runs on a host that
     already has a correct one. Reporting the sim as "unsynced" would be as false
     as reporting a cold ESP32 as synced.
+
+    `host` (settings.ntp_host) is tried first: a cluster with a local time server
+    reaches it when the public pools are firewalled off, and it is closer besides.
     """
     try:
         import ntptime
@@ -69,6 +72,8 @@ def sync(log=None):
         _state.update(synced=True, source='host', last=now())
         return True
     hosts = ['pool.ntp.org', 'time.google.com', 'time.cloudflare.com']
+    if host:
+        hosts = [host] + hosts
     ntptime.timeout = 3
     err = None
     for host in hosts:
